@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /**
  * Key-parity guard for the message tables.
  *

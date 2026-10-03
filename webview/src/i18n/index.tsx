@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { Language } from '../../../src/shared/protocol';
 import { translate } from '../../../src/shared/i18n';

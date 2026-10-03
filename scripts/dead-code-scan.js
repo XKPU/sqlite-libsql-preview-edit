@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /**
  * Dead-code scan: finds exported symbols in `src/` and `webview/src/` that are
  * referenced nowhere outside their own file.

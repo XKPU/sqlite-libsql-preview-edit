@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /**
  * Host-side i18n: a small observable wrapper over the shared lookup logic.
  *

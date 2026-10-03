@@ -1,7 +1,11 @@
 {
+  "SPDX-FileCopyrightText": "2026 K_PU",
+  "SPDX-License-Identifier": "AGPL-3.0-or-later",
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "Node16",
     "moduleResolution": "Node16",
     "outDir": "./out",
@@ -18,11 +22,22 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "downlevelIteration": true,
     "sourceMap": false,
     "declaration": false,
-    "types": ["node", "vscode"]
+    "types": [
+      "node",
+      "vscode"
+    ]
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"],
-  "exclude": ["node_modules", "out", "dist", "webview", "test"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "out",
+    "dist",
+    "webview",
+    "test"
+  ]
 }

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import React, { useState } from 'react';
 import { quoteIdent } from '../../../src/shared/protocol';
 import { useI18n } from '../i18n';

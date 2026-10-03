@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Test runner: compiles TypeScript tests with a dedicated tsconfig, then runs
 // them with the Node.js built-in `node --test` runner.
 const { execSync } = require('child_process');

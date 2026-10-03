@@ -1,13 +1,26 @@
 {
+  "SPDX-FileCopyrightText": "2026 K_PU",
+  "SPDX-License-Identifier": "AGPL-3.0-or-later",
   "extends": "./tsconfig.extension.json",
   "compilerOptions": {
     "noEmit": false,
     "outDir": "./out/test",
     "rootDir": ".",
     "module": "CommonJS",
-    "moduleResolution": "node",
-    "types": ["node"]
+    "moduleResolution": "node10",
+    "types": [
+      "node"
+    ]
   },
-  "include": ["test/**/*.ts", "src/**/*.ts", "src/**/*.d.ts"],
-  "exclude": ["node_modules", "out", "dist", "webview"]
+  "include": [
+    "test/**/*.ts",
+    "src/**/*.ts",
+    "src/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "out",
+    "dist",
+    "webview"
+  ]
 }

@@ -1,9 +1,15 @@
 {
+  "SPDX-FileCopyrightText": "2026 K_PU",
+  "SPDX-License-Identifier": "AGPL-3.0-or-later",
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ES2020",
-    "moduleResolution": "node",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "noImplicitAny": true,
@@ -18,9 +24,16 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "downlevelIteration": true,
     "incremental": true
   },
-  "include": ["src/**/*.ts", "webview/src/**/*.ts", "webview/src/**/*.tsx", "shared/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*.ts",
+    "webview/src/**/*.ts",
+    "webview/src/**/*.tsx",
+    "shared/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

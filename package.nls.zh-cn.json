@@ -1,4 +1,6 @@
 {
+  "SPDX-FileCopyrightText": "2026 K_PU",
+  "SPDX-License-Identifier": "AGPL-3.0-or-later",
   "displayName": "SQLite/LibSQL Preview&Edit",
   "description": "预览和编辑 SQLite / LibSQL 数据库文件，提供丰富的 UI、SQL 编辑器、导入导出和双语界面。",
   "editor.label": "SQLite / LibSQL 编辑器",

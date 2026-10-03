@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import { after, before, describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as os from 'os';

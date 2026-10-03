@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { I18nProvider } from './i18n';

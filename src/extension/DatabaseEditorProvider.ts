@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 K_PU
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { DatabaseAdapter } from './adapter/adapter';
