@@ -90,20 +90,10 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
    * is unavailable (e.g. unsupported platform, sandbox restrictions).
    */
   private createAdapter(): DatabaseAdapter {
-    try {
-      const adapter = new LibSqlAdapter();
-      // Probe: create a temporary client to verify the native module loads.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const libsql = require('@libsql/client') as {
-        createClient(opts: { url: string; authToken?: string }): { close(): void };
-      };
-      const probe = libsql.createClient({ url: 'file:///dev/null' });
-      probe.close();
-      return adapter;
-    } catch {
-      // Native libsql unavailable — fall back to the WASM sql.js engine.
-      return new SqlJsAdapter(this.context.asAbsolutePath('out/vendor/sqljs'));
-    }
+    // Keep the packaged extension on the portable sql.js path.
+    // LibSQL stays available in the adapter tree for later explicit enablement,
+    // but it must not block the editor UI from loading.
+    return new SqlJsAdapter(this.context.asAbsolutePath('out/vendor/sqljs'));
   }
 
   /* ------------------------------- lifecycle ---------------------------- */
@@ -113,6 +103,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
     _openContext: vscode.CustomDocumentOpenContext,
     _token: vscode.CancellationToken
   ): vscode.CustomDocument {
+    this.logger.info(`openCustomDocument: ${uri.fsPath}`);
     return new DatabaseDocument(uri);
   }
 
@@ -122,6 +113,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
     _token: vscode.CancellationToken
   ): void {
     const doc = document as DatabaseDocument;
+    this.logger.info(`resolveCustomEditor begin: ${doc.uri.fsPath}`);
     const session: Session = {
       panel,
       document: doc,
@@ -137,6 +129,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview')]
     };
     panel.webview.html = this.buildHtml(panel.webview);
+    this.logger.info(`webview html built for: ${doc.uri.fsPath}`);
 
     // Track which editor is active so the toolbar commands know their target.
     panel.onDidChangeViewState(() => {

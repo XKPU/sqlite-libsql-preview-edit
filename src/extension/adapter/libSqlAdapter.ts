@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import {
   bytesToHex,
   ColumnInfo,
@@ -80,10 +81,24 @@ interface LibSqlConnection {
   close(): void;
 }
 
-/** eslint-disable-next-line @typescript-eslint/no-var-requires */
-const { createClient } = require('@libsql/client') as {
+type LibSqlClientFactory = {
   createClient(opts: { url: string; authToken?: string }): LibSqlConnection;
 };
+
+let clientFactory: LibSqlClientFactory | null = null;
+
+function getClientFactory(): LibSqlClientFactory {
+  if (!clientFactory) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    clientFactory = require('@libsql/client') as LibSqlClientFactory;
+  }
+  return clientFactory;
+}
+
+/** Convert an OS file path to a LibSQL URL, preserving drive letters and spaces. */
+export function libSqlFileUrl(filePath: string): string {
+  return pathToFileURL(filePath).toString();
+}
 
 /* ------------------------------------------------------------------------ */
 
@@ -112,8 +127,7 @@ export class LibSqlAdapter implements DatabaseAdapter {
       return { code: 'FILE_NOT_FOUND', message: `Database file not found: ${filePath}` };
     }
     try {
-      const normalized = filePath.replace(/\\/g, '/');
-      this.client = createClient({ url: `file://${normalized}` });
+      this.client = getClientFactory().createClient({ url: libSqlFileUrl(filePath) });
       const versionResult = await this.client.execute({ sql: 'SELECT sqlite_version();', args: [] });
       const row = versionResult.rows[0];
       this.version = row ? String(Object.values(row)[0] ?? 'unknown') : 'unknown';

@@ -2,16 +2,17 @@
 # vsce packages everything NOT listed here, so the package contains only:
 #   package.json, package.nls*.json, out/extension/, out/webview/,
 #   out/vendor/sqljs/, icons/, README*.md, CHANGELOG*.md, LICENSE,
-#   node_modules/@libsql/**, node_modules/libsql/**.
+#   node_modules/@libsql/**, node_modules/libsql/**, node_modules/js-base64/**.
 #
-# node_modules is excluded by default, but the @libsql native runtime and its
-# platform-specific binaries are re-included via `!` overrides below — the
-# installed extension loads them directly from node_modules.
+# node_modules is excluded by default, but the @libsql native runtime, its
+# platform-specific binaries, and js-base64 are re-included via `!` overrides
+# below — the installed extension loads them directly from node_modules.
 .vscodeignore
 .gitignore
 node_modules/**
 !node_modules/@libsql/**
 !node_modules/libsql/**
+!node_modules/js-base64/**
 .git/**
 .git/**/*
 src/**

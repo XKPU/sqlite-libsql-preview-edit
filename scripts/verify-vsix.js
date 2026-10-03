@@ -80,10 +80,11 @@ console.log(`extracted with ${extractor}: ${vsix}\n  -> ${work}\n`);
 /* --------------------------- contents are clean -------------------------- */
 
 check('the archive carries no unexpected node_modules', () => {
-  // `@libsql` and `libsql` are re-included on purpose by `.vscodeignore`: the
-  // extension requires `@libsql/client` at runtime, and it is not bundled. Any
-  // other module under node_modules means the package is shipping dev deps.
-  const ALLOWED = new Set(['@libsql', 'libsql']);
+  // `@libsql`, `libsql`, and `js-base64` are re-included on purpose by
+  // `.vscodeignore`: the extension requires `@libsql/client` at runtime, and
+  // `@libsql/core` needs `js-base64`. Any other module under `node_modules`
+  // means the package is shipping dev deps.
+  const ALLOWED = new Set(['@libsql', 'libsql', 'js-base64']);
   const found = [];
   (function walk(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
