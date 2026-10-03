@@ -90,10 +90,14 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
    * is unavailable (e.g. unsupported platform, sandbox restrictions).
    */
   private createAdapter(): DatabaseAdapter {
-    // Keep the packaged extension on the portable sql.js path.
-    // LibSQL stays available in the adapter tree for later explicit enablement,
-    // but it must not block the editor UI from loading.
-    return new SqlJsAdapter(this.context.asAbsolutePath('out/vendor/sqljs'));
+    // Prefer the native LibSQL engine at startup; fall back only if the module
+    // is unavailable. The packaged VSIX must ship `js-base64` alongside the
+    // LibSQL runtime, otherwise the native path fails immediately.
+    try {
+      return new LibSqlAdapter();
+    } catch {
+      return new SqlJsAdapter(this.context.asAbsolutePath('out/vendor/sqljs'));
+    }
   }
 
   /* ------------------------------- lifecycle ---------------------------- */
@@ -525,6 +529,9 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
     }
     this.logger.info(
       `opened: driver=${r.driver} engine=${r.engine} version=${r.version} size=${r.sizeBytes} writable=${r.writable}`
+    );
+    this.logger.info(
+      `LibSQL detection: libSql=${r.detection.libSql} decidedBy=${r.detection.decidedBy} fallback=${r.detection.fallback} evidence=${r.detection.evidence.map((e) => `${e.kind}:${e.weight}`).join(',') || '(none)'}`
     );
     await this.sendState(session, 0);
   }

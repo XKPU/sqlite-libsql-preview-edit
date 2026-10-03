@@ -208,7 +208,7 @@
   },
   "scripts": {
     "clean": "node scripts/clean.js",
-    "compile": "npm run clean && npm run compile:extension && npm run compile:webview && node scripts/vendor-sqljs.js",
+    "compile": "npm run clean && npm run compile:extension && npm run compile:webview",
     "compile:extension": "node node_modules/typescript/bin/tsc -p ./tsconfig.extension.json",
     "compile:webview": "node node_modules/vite/bin/vite.js build --config vite.config.ts",
     "watch:extension": "node node_modules/typescript/bin/tsc -p ./tsconfig.extension.json --watch --preserveWatchOutput",
@@ -224,9 +224,13 @@
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
-    "sql.js": "^1.11.0"
+    "@neon-rs/load": "^0.0.4",
+    "detect-libc": "2.0.2",
+    "promise-limit": "^2.7.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
+    "sql.js": "^1.11.0",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

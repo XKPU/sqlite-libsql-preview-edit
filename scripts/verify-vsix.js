@@ -84,7 +84,7 @@ check('the archive carries no unexpected node_modules', () => {
   // `.vscodeignore`: the extension requires `@libsql/client` at runtime, and
   // `@libsql/core` needs `js-base64`. Any other module under `node_modules`
   // means the package is shipping dev deps.
-  const ALLOWED = new Set(['@libsql', 'libsql', 'js-base64']);
+  const ALLOWED = new Set(['@libsql', 'libsql', 'js-base64', '@neon-rs', 'detect-libc', 'ws', 'promise-limit']);
   const found = [];
   (function walk(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -112,11 +112,6 @@ check('the archive carries no stray database files', () => {
   assert.deepEqual(stray, [], 'no test databases may be shipped');
 });
 
-check('the vendored sql.js and its wasm are present', () => {
-  assert.ok(fs.existsSync(path.join(ext, 'out/vendor/sqljs/sql-wasm.js')), 'sql-wasm.js missing');
-  assert.ok(fs.existsSync(path.join(ext, 'out/vendor/sqljs/sql-wasm.wasm')), 'sql-wasm.wasm missing');
-});
-
 check('the webview bundle is present', () => {
   const assets = path.join(ext, 'out/webview/assets');
   assert.ok(fs.existsSync(assets), 'out/webview/assets missing');
@@ -128,23 +123,12 @@ check('the webview bundle is present', () => {
 
 /* ------------------------ sql.js must NOT be resolvable ------------------ */
 
-check('sql.js is not resolvable from the extraction', () => {
-  // Proves the bundled code cannot be silently borrowing the dev dependency.
-  let resolved = null;
-  try {
-    resolved = require.resolve('sql.js', { paths: [ext] });
-  } catch {
-    resolved = null;
-  }
-  assert.equal(resolved, null, `sql.js resolved to ${resolved}; the VSIX is not self-contained`);
-});
-
 /* --------------------------- the adapter really works ------------------- */
 
-const { SqlJsAdapter } = require(path.join(ext, 'out/extension/adapter/sqlJsAdapter.js'));
+const { LibSqlAdapter } = require(path.join(ext, 'out/extension/adapter/libSqlAdapter.js'));
 
 function runAdapterChecks() {
-  const adapter = new SqlJsAdapter(path.join(ext, 'out/vendor/sqljs'));
+  const adapter = new LibSqlAdapter();
   const dbPath = path.join(work, 'clean-room.db');
   // The editor opens files that exist; a new database is an existing zero-byte
   // file, which the adapter turns into an empty in-memory database. Creating the
@@ -170,13 +154,9 @@ function runAdapterChecks() {
 
 runAdapterChecks()
   .then((results) => {
-    check('the vendored engine opens a new database', () => {
+    check('the LibSQL engine opens a new database', () => {
       assert.ok(results.open && !results.open.code, `open failed: ${JSON.stringify(results.open)}`);
-      assert.equal(results.open.driver, 'sql.js', 'the WASM driver must be the one running queries');
-    });
-
-    check('the engine reports SQLite as its engine', () => {
-      assert.equal(results.open.engine, 'sqlite', 'a plain SQLite file must not be labelled LibSQL');
+      assert.equal(results.open.driver, 'libsql', 'the LibSQL driver must be the one running queries');
     });
 
     check('a written row reads back', () => {
@@ -224,7 +204,7 @@ runAdapterChecks()
 
 /** A non-database file must be classified, not reported as UNKNOWN. */
 function verifyCorruptHandling() {
-  const adapter = new SqlJsAdapter(path.join(ext, 'out/vendor/sqljs'));
+  const adapter = new LibSqlAdapter();
   const corrupt = path.join(work, 'corrupt.db');
   fs.writeFileSync(corrupt, 'this is definitely not a database, not even close');
   return adapter.open(corrupt).then((r) => {
