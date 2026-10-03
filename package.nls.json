@@ -1,0 +1,21 @@
+{
+  "displayName": "SQLite/LibSQL Preview&Edit",
+  "description": "Preview and edit SQLite / LibSQL database files with a rich UI, SQL editor, import/export, and bilingual interface.",
+  "editor.label": "SQLite / LibSQL Editor",
+  "command.open": "Open Database",
+  "command.refresh": "Refresh Database",
+  "command.reopen": "Re-open Database",
+  "command.close": "Close Database",
+  "command.info": "Database Information",
+  "command.sqlEditor": "Open SQL Editor",
+  "command.addObject": "Add Object",
+  "config.title": "SQLite/LibSQL Preview&Edit",
+  "config.language": "Interface language. auto = follow VS Code language, en = English, zh-cn = Simplified Chinese.",
+  "config.pageSize": "Number of rows per page when browsing table data.",
+  "config.readOnly": "Disable all write operations (data edits and structural changes).",
+  "config.confirmDestructiveActions": "Ask for confirmation before dropping tables, views, indexes, or columns.",
+  "config.nullDisplay": "Text used to display SQL NULL values in tables and queries.",
+  "config.maxCellLength": "Maximum number of characters shown per cell. Longer values are truncated with an ellipsis.",
+  "config.exportEncoding": "Encoding used when exporting files.",
+  "command.showLog": "Show Diagnostic Log"
+}

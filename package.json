@@ -1,0 +1,245 @@
+{
+  "name": "sqlite-libsql-preview-edit",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.0.1",
+  "publisher": "K_PU",
+  "license": "AGPL-3.0-only",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XKPU/sqlite-libsql-preview-edit.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "activationEvents": [
+    "onCustomEditor:libSqlPreviewEdit.editor",
+    "onCommand:libSqlPreviewEdit.open",
+    "onCommand:libSqlPreviewEdit.refresh",
+    "onCommand:libSqlPreviewEdit.reopen",
+    "onCommand:libSqlPreviewEdit.close",
+    "onCommand:libSqlPreviewEdit.showInfo",
+    "onCommand:libSqlPreviewEdit.openSqlEditor",
+    "onCommand:libSqlPreviewEdit.addObject",
+    "onCommand:libSqlPreviewEdit.showLog"
+  ],
+  "icon": "icons/sqlite-libsql-preview-edit.png",
+  "categories": [
+    "Database"
+  ],
+  "keywords": [
+    "sqlite",
+    "libsql",
+    "database",
+    "sql",
+    "preview",
+    "edit"
+  ],
+  "main": "./out/extension/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "libSqlPreviewEdit.editor",
+        "displayName": "%editor.label%",
+        "priority": "default",
+        "selector": [
+          {
+            "filenamePattern": "*.db"
+          },
+          {
+            "filenamePattern": "*.sqlite"
+          },
+          {
+            "filenamePattern": "*.sqlite3"
+          },
+          {
+            "filenamePattern": "*.libsql"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "libSqlPreviewEdit.open",
+        "title": "%command.open%",
+        "icon": "$(database)"
+      },
+      {
+        "command": "libSqlPreviewEdit.refresh",
+        "title": "%command.refresh%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "libSqlPreviewEdit.reopen",
+        "title": "%command.reopen%",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "libSqlPreviewEdit.close",
+        "title": "%command.close%",
+        "icon": "$(close)"
+      },
+      {
+        "command": "libSqlPreviewEdit.showInfo",
+        "title": "%command.info%",
+        "icon": "$(info)"
+      },
+      {
+        "command": "libSqlPreviewEdit.openSqlEditor",
+        "title": "%command.sqlEditor%",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "libSqlPreviewEdit.addObject",
+        "title": "%command.addObject%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "libSqlPreviewEdit.showLog",
+        "title": "%command.showLog%",
+        "icon": "$(output)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "libSqlPreviewEdit.open",
+          "when": "resourceFilename =~ /\\.(db|sqlite|sqlite3|libsql)$/i",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "libSqlPreviewEdit.refresh",
+          "when": "customEditorProvider == libSqlPreviewEdit.editor",
+          "group": "navigation"
+        },
+        {
+          "command": "libSqlPreviewEdit.reopen",
+          "when": "customEditorProvider == libSqlPreviewEdit.editor",
+          "group": "navigation"
+        },
+        {
+          "command": "libSqlPreviewEdit.close",
+          "when": "customEditorProvider == libSqlPreviewEdit.editor",
+          "group": "navigation"
+        },
+        {
+          "command": "libSqlPreviewEdit.showInfo",
+          "when": "customEditorProvider == libSqlPreviewEdit.editor",
+          "group": "1_modification"
+        },
+        {
+          "command": "libSqlPreviewEdit.openSqlEditor",
+          "when": "customEditorProvider == libSqlPreviewEdit.editor",
+          "group": "1_modification"
+        },
+        {
+          "command": "libSqlPreviewEdit.addObject",
+          "when": "customEditorProvider == libSqlPreviewEdit.editor",
+          "group": "1_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "libSqlPreviewEdit.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "zh-cn"
+          ],
+          "default": "auto",
+          "order": 1,
+          "description": "%config.language%"
+        },
+        "libSqlPreviewEdit.pageSize": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 10000,
+          "order": 2,
+          "description": "%config.pageSize%"
+        },
+        "libSqlPreviewEdit.readOnly": {
+          "type": "boolean",
+          "default": false,
+          "order": 3,
+          "description": "%config.readOnly%"
+        },
+        "libSqlPreviewEdit.confirmDestructiveActions": {
+          "type": "boolean",
+          "default": true,
+          "order": 4,
+          "description": "%config.confirmDestructiveActions%"
+        },
+        "libSqlPreviewEdit.nullDisplay": {
+          "type": "string",
+          "default": "NULL",
+          "order": 5,
+          "description": "%config.nullDisplay%"
+        },
+        "libSqlPreviewEdit.maxCellLength": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 0,
+          "maximum": 1000000,
+          "order": 6,
+          "description": "%config.maxCellLength%"
+        },
+        "libSqlPreviewEdit.exportEncoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "utf16le",
+            "ascii",
+            "base64"
+          ],
+          "default": "utf8",
+          "order": 7,
+          "description": "%config.exportEncoding%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node scripts/clean.js",
+    "compile": "npm run clean && npm run compile:extension && npm run compile:webview && node scripts/vendor-sqljs.js",
+    "compile:extension": "node node_modules/typescript/bin/tsc -p ./tsconfig.extension.json",
+    "compile:webview": "node node_modules/vite/bin/vite.js build --config vite.config.ts",
+    "watch:extension": "node node_modules/typescript/bin/tsc -p ./tsconfig.extension.json --watch --preserveWatchOutput",
+    "watch:webview": "node node_modules/vite/bin/vite.js build --config vite.config.ts --watch --mode development",
+    "lint": "node node_modules/eslint/bin/eslint.js \"src/**/*.ts\" \"webview/src/**/*.{ts,tsx}\"",
+    "test": "node scripts/test-runner.js",
+    "verify:vsix": "node scripts/verify-vsix.js",
+    "verify:router": "node scripts/verify-message-router.js",
+    "verify:deadcode": "node scripts/dead-code-scan.js",
+    "verify:duplication": "node scripts/dupe-heatmap.js 8 --max=500",
+    "verify": "npm run verify:deadcode && npm run verify:duplication && npm run verify:router && npm run verify:vsix",
+    "package": "npm run compile && node node_modules/vsce/vsce package"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.34.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.3.5",
+    "vsce": "^2.15.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "displayName": "SQLite/LibSQL Preview&Edit",
+  "description": "预览和编辑 SQLite / LibSQL 数据库文件，提供丰富的 UI、SQL 编辑器、导入导出和双语界面。",
+  "editor.label": "SQLite / LibSQL 编辑器",
+  "command.open": "打开数据库",
+  "command.refresh": "刷新数据库",
+  "command.reopen": "重新打开数据库",
+  "command.close": "关闭数据库",
+  "command.info": "数据库信息",
+  "command.sqlEditor": "打开 SQL 编辑器",
+  "command.addObject": "添加对象",
+  "config.title": "SQLite/LibSQL Preview&Edit",
+  "config.language": "界面语言。auto = 跟随 VS Code 语言，en = 英语，zh-cn = 简体中文。",
+  "config.pageSize": "浏览表数据时每页显示的行数。",
+  "config.readOnly": "禁用所有写操作（数据编辑和结构修改）。",
+  "config.confirmDestructiveActions": "在删除表、视图、索引或列之前请求确认。",
+  "config.nullDisplay": "在表格和查询中用于显示 SQL NULL 值的文本。",
+  "config.maxCellLength": "每个单元格显示的最大字符数。较长的值会被省略号截断。",
+  "config.exportEncoding": "导出文件时使用的编码。",
+  "command.showLog": "显示诊断日志"
+}

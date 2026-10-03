@@ -1,0 +1,43 @@
+# Files to exclude from the VSIX package.
+# vsce packages everything NOT listed here, so the package contains only:
+#   package.json, package.nls*.json, out/extension/, out/webview/,
+#   out/vendor/sqljs/, icons/, README*.md, CHANGELOG*.md, LICENSE,
+#   node_modules/@libsql/**, node_modules/libsql/**.
+#
+# node_modules is excluded by default, but the @libsql native runtime and its
+# platform-specific binaries are re-included via `!` overrides below — the
+# installed extension loads them directly from node_modules.
+.vscodeignore
+.gitignore
+node_modules/**
+!node_modules/@libsql/**
+!node_modules/libsql/**
+.git/**
+.git/**/*
+src/**
+webview/**
+test/**
+scripts/**
+out/test/**
+tsconfig.json
+tsconfig.extension.json
+tsconfig.test.json
+vite.config.ts
+.eslintrc.cjs
+*.ts
+*.tsx
+*.js.map
+*.ts.map
+*.tsbuildinfo
+# Local scratch/staging directories must never reach the package.
+.vsix-stage/**
+*.vsix
+# Any other dot-directory at the root is local tooling/scratch (backups, caches);
+# nothing the extension needs at runtime starts with a dot.
+.*/**
+# Database files are user data (sample/test databases kept beside the source),
+# never extension assets. They must not be shipped inside the VSIX.
+*.db
+*.sqlite
+*.sqlite3
+*.libsql
