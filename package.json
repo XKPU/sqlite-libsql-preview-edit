@@ -3,7 +3,7 @@
   "displayName": "%displayName%",
   "description": "%description%",
   "version": "0.0.1",
-  "publisher": "K_PU",
+  "publisher": "U-EPTM",
   "license": "AGPL-3.0-only",
   "private": false,
   "repository": {
@@ -26,7 +26,8 @@
   ],
   "icon": "icons/sqlite-libsql-preview-edit.png",
   "categories": [
-    "Database"
+    "Other",
+    "Data Science"
   ],
   "keywords": [
     "sqlite",
