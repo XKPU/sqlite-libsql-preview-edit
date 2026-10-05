@@ -1,6 +1,6 @@
 # SQLite/LibSQL/Turso Preview&Edit
 
-## [Unreleased] - 2026-10-05
+## [v0.0.3] - 2026-10-05
 
 ### Added
 
@@ -33,4 +33,4 @@
 - Fixed an issue where exporting from a custom SQL query always failed
   修复通过自定义 SQL 查询导出时始终失败的问题
 
-[Unreleased]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.2...HEAD
+[v0.0.3]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.2...v0.0.3
