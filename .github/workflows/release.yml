@@ -99,20 +99,18 @@ jobs:
           # --- macOS: runner arch decides the binary -------------------------
           # Only the Apple-silicon build exists upstream; there is no
           # `database-darwin-x64`, so macOS Intel is unsupported.
-          - os: macos-14
+          - os: macos-latest
             target: darwin-arm64
             vsce_target: darwin-arm64
           # --- Linux (glibc) -------------------------------------------------
           - os: ubuntu-latest
             target: linux-x64
             vsce_target: linux-x64
-          # linux-arm64 is cross-installed on an x64 runner via npm's
-          # target-arch environment variables.
-          - os: ubuntu-latest
+          # A NATIVE arm64 runner, so no npm cross-install variables are needed:
+          # the install resolves `database-linux-arm64-gnu` on its own.
+          - os: ubuntu-24.04-arm
             target: linux-arm64
             vsce_target: linux-arm64
-            npm_config_arch: arm64
-            npm_config_platform: linux
           # Alpine (musl) is NOT built: the upstream Linux binaries are
           # glibc-only, so there is no musl package to install.
 
@@ -127,10 +125,13 @@ jobs:
           # entry installs its own platform's optional dependency below.
           cache: npm
 
-      # Install the dependency tree for THIS target. The cross-install env vars
-      # (varies per matrix entry) make npm fetch the matching
-      # @tursodatabase/database-<platform> optional dependency instead of the
-      # host's.
+      # Install the dependency tree for THIS target.
+      #
+      # Each matrix entry runs on a runner whose OWN platform matches the target,
+      # so no cross-install variables are needed and none are set: npm resolves
+      # the right `@tursodatabase/database-<platform>` optional dependency from
+      # the host. (The vars are still passed through for the rare case of a
+      # target that must be built on a mismatched runner; they are empty here.)
       #
       # `npm ci` is used (not `npm install`) so the lockfile is authoritative.
       # The native packages are OPTIONAL dependencies, so npm silently skips the
