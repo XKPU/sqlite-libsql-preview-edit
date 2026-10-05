@@ -23,7 +23,8 @@ const outDir = path.join(root, 'VSIX', pkg.version);
 fs.mkdirSync(outDir, { recursive: true });
 
 const out = path.join(outDir, `${pkg.name}-${pkg.version}.vsix`);
-const vsce = path.join(root, 'node_modules', 'vsce', 'vsce');
+// `vsce` was renamed to `@vscode/vsce`; the bin path layout is unchanged.
+const vsce = path.join(root, 'node_modules', '@vscode', 'vsce', 'vsce');
 
 console.log(`=== packaging untargeted VSIX for the host (${process.platform}-${process.arch}) ===`);
 try {

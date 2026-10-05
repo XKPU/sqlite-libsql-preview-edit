@@ -4,7 +4,15 @@
 
 // Test runner: compiles TypeScript tests with a dedicated tsconfig, then runs
 // them with the Node.js built-in `node --test` runner.
-const { execSync } = require('child_process');
+//
+// SECURITY: every child process is spawned with `execFileSync` and an argument
+// array, never through a shell. Shell-interpolated commands are unsafe here
+// because this repository's own path contains `&` and a space, and because a
+// path may contain characters the shell treats specially (`&`, `%`, `$`, `"`,
+// `` ` ``). Passing an argument array means the OS executes the binary directly
+// and no shell ever parses the path, so those characters cannot change the
+// meaning of the command.
+const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -12,14 +20,16 @@ const root = path.resolve(__dirname, '..');
 const outDir = path.join(root, 'out', 'test');
 const tscPath = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
 
+/** Run a Node script directly, without a shell. */
+function runNode(args, options = {}) {
+  execFileSync(process.execPath, args, { cwd: root, ...options });
+}
+
 fs.mkdirSync(outDir, { recursive: true });
 
 // Compile the test files.
 try {
-  execSync(`node ${JSON.stringify(tscPath)} -p ./tsconfig.test.json`, {
-    cwd: root,
-    stdio: 'inherit'
-  });
+  runNode([tscPath, '-p', './tsconfig.test.json'], { stdio: 'inherit' });
 } catch {
   console.error('Test compilation failed.');
   process.exit(1);
@@ -42,11 +52,11 @@ if (testFiles.length === 0) {
   process.exit(0);
 }
 
-// Run all test files in one node --test invocation.
+// Run each compiled test file with the built-in test runner.
 let failed = false;
 for (const file of testFiles) {
   try {
-    execSync(`node --test ${JSON.stringify(file)}`, { cwd: root, stdio: 'inherit' });
+    runNode(['--test', file], { stdio: 'inherit' });
   } catch {
     failed = true;
   }
@@ -57,11 +67,10 @@ for (const file of testFiles) {
 // tests assert on intent; this drives the real compiled code through a fake
 // VS Code API, so it fails if the shipped logic regresses.
 try {
-  execSync('npm run compile:extension', { cwd: root, stdio: 'ignore' });
-  execSync(`node ${JSON.stringify(path.join(__dirname, 'verify-message-router.js'))}`, {
-    cwd: root,
-    stdio: 'inherit'
-  });
+  // `compile:extension` is just `tsc -p ./tsconfig.extension.json`, so call tsc
+  // directly rather than through npm (no shell, no npm.cmd resolution problem).
+  runNode([tscPath, '-p', './tsconfig.extension.json'], { stdio: 'ignore' });
+  runNode([path.join(__dirname, 'verify-message-router.js')], { stdio: 'inherit' });
 } catch {
   console.error('Compiled message-router verification failed.');
   failed = true;

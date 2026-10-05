@@ -73,7 +73,8 @@ if (unknown.length > 0) {
 const outDir = path.join(root, 'VSIX', pkg.version);
 fs.mkdirSync(outDir, { recursive: true });
 
-const vsce = path.join(root, 'node_modules', 'vsce', 'vsce');
+// `vsce` was renamed to `@vscode/vsce`; the bin path layout is unchanged.
+const vsce = path.join(root, 'node_modules', '@vscode', 'vsce', 'vsce');
 
 let failed = 0;
 for (const target of argv) {

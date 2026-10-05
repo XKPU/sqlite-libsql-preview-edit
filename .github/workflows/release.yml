@@ -180,7 +180,7 @@ jobs:
           # walking the dependency tree, so `node_modules/@tursodatabase/**`
           # never reaches the archive and the installed extension cannot load
           # its engine at all. `.vscodeignore` is what controls the contents.
-          node node_modules/vsce/vsce package \
+          node node_modules/@vscode/vsce/vsce package \
             --target "${{ matrix.vsce_target }}" \
             -o "VSIX/$VERSION/sqlite-libsql-preview-edit-${{ matrix.vsce_target }}.vsix"
 
