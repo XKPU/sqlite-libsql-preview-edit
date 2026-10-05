@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import React, { useCallback, useEffect, useState } from 'react';
-import type { Language } from '../../src/shared/protocol';
+import type { DbEngine, Language } from '../../src/shared/protocol';
 import { useI18n } from './i18n';
 import { useDatabaseState, errorKey } from './hooks/useDatabaseState';
 import { ObjectTree } from './components/ObjectTree';
@@ -266,6 +266,18 @@ function languageLabel(lang: Language): string {
   return lang === 'zh-cn' ? '中文' : 'EN';
 }
 
+/**
+ * Display label for each engine value.
+ *
+ * An explicit map rather than a ternary, so adding a dialect is a compile-time
+ * error here instead of silently falling through to "SQLite".
+ */
+const ENGINE_LABEL_KEY: Record<DbEngine, 'engine.sqlite' | 'engine.libsql' | 'engine.turso'> = {
+  sqlite: 'engine.sqlite',
+  libsql: 'engine.libsql',
+  turso: 'engine.turso'
+};
+
 function formatBytes(bytes: number | undefined | null): string {
   if (bytes === undefined || bytes === null) return '—';
   if (bytes < 1024) return `${bytes} B`;
@@ -280,7 +292,17 @@ const InfoDetail: React.FC<{ dbInfo: NonNullable<ReturnType<typeof useDatabaseSt
 }) => {
   const { t } = useI18n();
   const caps = dbInfo.capabilities;
-  const libsqlActive = dbInfo.engine === 'libsql' && !dbInfo.detection.fallback;
+  // The bundled engine is always Turso Database, which is a superset of SQLite
+  // and libSQL, so these capabilities are live for every file — they are NOT
+  // gated on the detected dialect. `embeddedReplicas` stays false (that is a
+  // Turso Cloud feature and this extension is local-file only).
+  const anyCapability =
+    caps.strictTables ||
+    caps.alterColumn ||
+    caps.vectorSearch ||
+    caps.upsertReturning ||
+    caps.nonConstantDefaults ||
+    caps.sequences;
   return (
     <Modal title={t('info.title')} onClose={onClose} overlayClassName="modal-anchored">
       <InfoRow label={t('info.path')} value={dbInfo.path || '—'} />
@@ -290,10 +312,10 @@ const InfoDetail: React.FC<{ dbInfo: NonNullable<ReturnType<typeof useDatabaseSt
       <InfoRow label={t('info.writable')} value={dbInfo.writable ? t('yes') : t('no')} />
       {dbInfo.version && <InfoRow label={t('info.version')} value={dbInfo.version} />}
       <InfoRow label={t('info.driver')} value={dbInfo.driver} />
-      <InfoRow label={t('info.engine')} value={dbInfo.engine === 'libsql' ? t('engine.libsql') : t('engine.sqlite')} />
+      <InfoRow label={t('info.engine')} value={t(ENGINE_LABEL_KEY[dbInfo.engine] ?? 'engine.sqlite')} />
       {dbInfo.detection.fallback && <InfoRow label={t('engine.evidence')} value={t('engine.libsql.fallback')} />}
 
-      {libsqlActive && (
+      {anyCapability && (
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--vscode-descriptionForeground)', marginBottom: 4 }}>
             {t('cap.title')}
@@ -304,6 +326,7 @@ const InfoDetail: React.FC<{ dbInfo: NonNullable<ReturnType<typeof useDatabaseSt
           <CapRow label={t('cap.upsertReturning')} enabled={caps.upsertReturning} />
           <CapRow label={t('cap.embeddedReplicas')} enabled={caps.embeddedReplicas} />
           <CapRow label={t('cap.nonConstantDefaults')} enabled={caps.nonConstantDefaults} />
+          <CapRow label={t('cap.sequences')} enabled={caps.sequences} />
           {caps.onlyFunctions.length > 0 && (
             <InfoRow label={t('cap.functions')} value={caps.onlyFunctions.join(', ')} />
           )}

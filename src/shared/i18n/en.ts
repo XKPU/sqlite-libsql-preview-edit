@@ -86,20 +86,22 @@ export const en = {
   /* engine detection */
   'engine.sqlite': 'SQLite',
   'engine.libsql': 'LibSQL',
+  'engine.turso': 'Turso Database',
   'engine.detected': 'Engine detected: {engine}',
   'engine.libsql.active': 'LibSQL features enabled',
   'engine.libsql.fallback': 'LibSQL file opened with the bundled SQLite engine',
   'engine.evidence': 'Detection evidence',
 
   /* LibSQL capabilities */
-  'cap.title': 'LibSQL capabilities',
+  'cap.title': 'Engine capabilities',
   'cap.strictTables': 'STRICT tables',
   'cap.alterColumn': 'ALTER / DROP COLUMN',
   'cap.vectorSearch': 'Vector search',
   'cap.upsertReturning': 'UPSERT … RETURNING',
   'cap.embeddedReplicas': 'Embedded replicas',
   'cap.nonConstantDefaults': 'Non-constant defaults',
-  'cap.functions': 'LibSQL functions',
+  'cap.sequences': 'Sequences',
+  'cap.functions': 'Engine functions',
   'cap.enabled': 'enabled',
   'cap.disabled': 'not available',
 

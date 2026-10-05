@@ -1,8 +1,8 @@
 # Files to exclude from the VSIX package.
 # vsce packages everything NOT listed here, so the package contains only:
 #   package.json, package.nls*.json, out/extension/, out/webview/,
-#   icons/, README*.md, CHANGELOG*.md, LICENSE,
-#   node_modules/@tursodatabase/** and node_modules/js-base64/**.
+#   icons/, README*.md, SUPPORT*.md, SECURITY*.md, CHANGELOG*.md, LICENSE,
+#   node_modules/@tursodatabase/**.
 #
 # The database engine is Turso Database (`@tursodatabase/database`), a NATIVE
 # local-file engine. sql.js is gone (out/vendor/sqljs/ and node_modules/sql.js

@@ -132,21 +132,33 @@ export interface DatabaseInfo {
   readOnly: boolean;
   version: string;
   /**
-   * Name of the driver actually running the queries (e.g. `libsql`). Distinct
-   * from `engine`: the driver is the implementation, the engine is the dialect
-   * the file calls for.
+   * Name of the driver implementation running the queries. Distinct from
+   * `engine`: the driver is the implementation, the engine is the dialect the
+   * file is written in. Always `turso` while Turso Database is the only driver.
    */
   driver: string;
-  /** Engine currently driving the file. `sqlite` unless LibSQL was detected. */
+  /**
+   * The dialect the file is written in, inferred by detection. Defaults to
+   * `sqlite`; `libsql` and `turso` are reported from the matching signals.
+   *
+   * This is a *label*, not a dispatch switch: every file is served by the same
+   * Turso Database driver, so the value never selects an implementation and
+   * never turns a capability on or off. See `capabilities` below.
+   */
   engine: DbEngine;
-  /** How the engine was determined, with the evidence that decided it. */
+  /** How the dialect was determined, with the evidence that decided it. */
   detection: LibSqlDetection;
-  /** Capabilities switched on by detection. SQLite baseline when not LibSQL. */
+  /**
+   * Capabilities the bundled engine offers. Reported unconditionally from
+   * `TURSO_CAPABILITIES`, because Turso Database is a superset of SQLite and
+   * LibSQL and is the only engine that can run — the detected dialect does not
+   * change what is executable.
+   */
   capabilities: LibSqlCapabilities;
 }
 
 /* ------------------------------------------------------------------------ */
-/* Engine detection: SQLite baseline -> LibSQL opt-in                       */
+/* Dialect detection: SQLite baseline, LibSQL, Turso Database               */
 /* ------------------------------------------------------------------------ */
 
 /**
@@ -165,10 +177,14 @@ export type DbEngine = 'sqlite' | 'libsql' | 'turso';
 export type LibSqlEvidenceKind =
   /** The file name uses a LibSQL-specific extension (`.libsql`). */
   | 'extension'
+  /** The file name uses the Turso Database extension (`.turso`). */
+  | 'turso-extension'
   /** An engine PRAGMA reported a LibSQL build. */
   | 'pragma'
   /** `sqlite_version()` carried a LibSQL suffix. */
   | 'version'
+  /** `sqlite_version()` carried a Turso Database identifier. */
+  | 'turso-version'
   /** The schema contains LibSQL system/shadow tables. */
   | 'schema'
   /** No evidence either way; the SQLite baseline stands. */
@@ -216,14 +232,19 @@ export interface LibSqlCapabilities {
 }
 
 export interface LibSqlDetection {
+  /** The dialect the file is written in. */
   engine: DbEngine;
-  /** Convenience mirror of `engine === 'libsql'`. */
+  /**
+   * True when the file is any member of the LibSQL family — `libsql` or
+   * `turso`, since Turso Database is a LibSQL-derived engine. False only for
+   * the plain SQLite baseline.
+   */
   libSql: boolean;
   /**
-   * Always `false`: the native libsql engine is the only driver, so a detected
-   * LibSQL file is never served by a less capable fallback engine. Kept as a
-   * field because the webview still reads it and a future fallback engine would
-   * need somewhere to report that.
+   * Always `false`: the bundled engine is the only driver, so a detected file
+   * is never served by a less capable fallback engine. Kept as a field because
+   * the webview still reads it and a future fallback engine would need
+   * somewhere to report that.
    */
   fallback: boolean;
   /** Evidence considered, strongest first. Empty when nothing matched. */
@@ -741,6 +762,15 @@ export function quoteLiteral(v: SqlValue): string {
 /** File extensions that are unambiguously LibSQL. */
 export const LIBSQL_EXTENSIONS = ['.libsql'] as const;
 
+/**
+ * File extensions that are unambiguously Turso Database.
+ *
+ * All three dialects share one on-disk container, so the extension is a naming
+ * convention rather than proof — but it is the only signal a freshly created,
+ * still-empty file can carry.
+ */
+export const TURSO_EXTENSIONS = ['.turso'] as const;
+
 /** File extensions that are unambiguously the SQLite baseline. */
 export const SQLITE_EXTENSIONS = ['.db', '.sqlite', '.sqlite3', '.db3'] as const;
 
@@ -767,6 +797,15 @@ export const SQLITE_HEADER_MAGIC = 'SQLite format 3\0';
 export const SQLITE_HEADER_FIXED_BYTES = [64, 32, 32] as const;
 
 /**
+ * Engine version strings that identify a Turso Database build.
+ *
+ * Checked BEFORE the LibSQL pattern, because the LibSQL pattern is deliberately
+ * broad enough to also match `turso` (the two projects share history) and would
+ * otherwise swallow Turso's own identifier and report it as LibSQL.
+ */
+const TURSO_VERSION_RE = /turso/i;
+
+/**
  * Engine version strings that identify a LibSQL-family build.
  *
  * libSQL exposes its own version through `libsql_libversion()`; the SQLite
@@ -774,7 +813,7 @@ export const SQLITE_HEADER_FIXED_BYTES = [64, 32, 32] as const;
  * depending on the build. Matching these is the strongest portable in-file
  * signal available without libSQL-specific APIs.
  */
-const LIBSQL_VERSION_RE = /libsql|libsql-server|sqld|turso/i;
+const LIBSQL_VERSION_RE = /libsql|libsql-server|sqld/i;
 
 /** Lower-case extension of a path, including the dot; '' when there is none. */
 export function extensionOf(filePath: string): string {
@@ -786,6 +825,11 @@ export function extensionOf(filePath: string): string {
 /** True when the extension is LibSQL-exclusive. */
 export function hasLibSqlExtension(filePath: string): boolean {
   return (LIBSQL_EXTENSIONS as readonly string[]).includes(extensionOf(filePath));
+}
+
+/** True when the extension is Turso-exclusive. */
+export function hasTursoExtension(filePath: string): boolean {
+  return (TURSO_EXTENSIONS as readonly string[]).includes(extensionOf(filePath));
 }
 
 /** True when the extension is one of the plain SQLite baseline ones. */
@@ -837,6 +881,17 @@ function latin1(bytes: Uint8Array, start: number, end: number): string {
 /** Evidence from the `sqlite_version()` / engine version string. */
 export function detectLibSqlInVersion(version: string | undefined): LibSqlEvidence[] {
   if (!version) return [];
+  // Turso first: the LibSQL pattern also matches "turso", so testing it first
+  // would mislabel a Turso build as LibSQL.
+  if (TURSO_VERSION_RE.test(version)) {
+    return [
+      {
+        kind: 'turso-version',
+        detail: `Engine version reported "${version}".`,
+        weight: 80
+      }
+    ];
+  }
   if (!LIBSQL_VERSION_RE.test(version)) return [];
   return [
     {
@@ -880,6 +935,15 @@ export function detectLibSqlInSchema(objectNames: readonly string[] | undefined)
 
 /** Evidence from the extension alone. Weakest signal, so the lowest weight. */
 export function detectLibSqlInExtension(filePath: string): LibSqlEvidence[] {
+  if (hasTursoExtension(filePath)) {
+    return [
+      {
+        kind: 'turso-extension',
+        detail: `File name uses the Turso Database extension "${extensionOf(filePath)}".`,
+        weight: 60
+      }
+    ];
+  }
   if (!hasLibSqlExtension(filePath)) return [];
   return [
     {
@@ -917,8 +981,12 @@ export function resolveLibSqlDetection(
 
   const top = evidence[0];
   const libSql = top !== undefined;
+  // `top` alone names the dialect: the three dialects are mutually exclusive by
+  // definition, so whichever signal won decides both the verdict and the label.
+  const engine: DbEngine =
+    top?.kind === 'turso-version' || top?.kind === 'turso-extension' ? 'turso' : libSql ? 'libsql' : 'sqlite';
   return {
-    engine: libSql ? 'libsql' : 'sqlite',
+    engine,
     libSql,
     fallback: libSql && fallback,
     evidence,

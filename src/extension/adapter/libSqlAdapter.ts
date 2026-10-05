@@ -455,8 +455,10 @@ export class LibSqlAdapter implements DatabaseAdapter {
   }
 
   /**
-   * True when the current file is LibSQL. Note this says nothing about which
-   * LibSQL features are executable — see `capabilities()` for that.
+   * True when the current file belongs to the LibSQL family (LibSQL or Turso
+   * Database), as opposed to the plain SQLite baseline. Note this says nothing
+   * about which features are executable — see `capabilities()` for that, which
+   * is reported unconditionally.
    */
   isLibSql(): boolean {
     return this.detection?.libSql === true || this.detection?.engine === 'libsql';

@@ -13,6 +13,7 @@ import {
   hasLibSqlExtension,
   hasSqliteExtension,
   hasSqliteHeader,
+  hasTursoExtension,
   LIBSQL_CAPABILITIES,
   resolveLibSqlDetection,
   SQLITE_CAPABILITIES,
@@ -49,6 +50,13 @@ describe('extension classification', () => {
     assert.equal(hasLibSqlExtension('/tmp/a.libsql'), true);
     assert.equal(hasLibSqlExtension('/tmp/a.LIBSQL'), true);
     assert.equal(hasLibSqlExtension('/tmp/a.sqlite'), false);
+  });
+
+  it('recognises the Turso-only extension', () => {
+    assert.equal(hasTursoExtension('/tmp/a.turso'), true);
+    assert.equal(hasTursoExtension('/tmp/a.TURSO'), true);
+    assert.equal(hasTursoExtension('/tmp/a.libsql'), false);
+    assert.equal(hasTursoExtension('/tmp/a.sqlite'), false);
   });
 
   it('recognises the plain SQLite extensions', () => {
@@ -103,6 +111,18 @@ describe('detectLibSqlInVersion', () => {
     assert.equal(detectLibSqlInVersion('sqld 0.24').length, 1);
   });
 
+  /**
+   * The LibSQL pattern is broad enough to also match "turso" (the projects share
+   * history), so Turso must be tested first or it would be mislabelled.
+   */
+  it('reports Turso, not LibSQL, for a Turso version string', () => {
+    for (const v of ['0.8.1-turso', 'turso 0.8.1', 'Turso Database 3.50.4']) {
+      const ev = detectLibSqlInVersion(v);
+      assert.equal(ev.length, 1, v);
+      assert.equal(ev[0]?.kind, 'turso-version', v);
+    }
+  });
+
   it('ignores a stock SQLite version', () => {
     assert.deepEqual(detectLibSqlInVersion('3.45.1'), []);
     assert.deepEqual(detectLibSqlInVersion(undefined), []);
@@ -133,6 +153,12 @@ describe('detectLibSqlInExtension', () => {
     assert.equal(detectLibSqlInExtension('/tmp/a.libsql').length, 1);
     assert.deepEqual(detectLibSqlInExtension('/tmp/a.sqlite'), []);
   });
+
+  it('produces Turso-specific evidence for a .turso file', () => {
+    const ev = detectLibSqlInExtension('/tmp/a.turso');
+    assert.equal(ev.length, 1);
+    assert.equal(ev[0]?.kind, 'turso-extension');
+  });
 });
 
 describe('resolveLibSqlDetection', () => {
@@ -157,6 +183,39 @@ describe('resolveLibSqlDetection', () => {
     const d = resolveLibSqlDetection('/tmp/a.libsql', {}, true);
     assert.equal(d.libSql, true);
     assert.equal(d.decidedBy, 'extension');
+  });
+
+  it('reports the turso engine for a .turso file', () => {
+    const d = resolveLibSqlDetection('/tmp/a.turso', {}, true);
+    assert.equal(d.engine, 'turso');
+    assert.equal(d.decidedBy, 'turso-extension');
+    // Turso is a LibSQL-family engine, so the shared capability gate stays on.
+    assert.equal(d.libSql, true);
+  });
+
+  it('reports the turso engine from a Turso version string', () => {
+    const d = resolveLibSqlDetection('/tmp/renamed.db', { version: '0.8.1-turso' }, true);
+    assert.equal(d.engine, 'turso');
+    assert.equal(d.decidedBy, 'turso-version');
+  });
+
+  /**
+   * The three dialects must stay distinguishable: a plain SQLite file is never
+   * promoted to libsql/turso, and a Turso marker is never downgraded to libsql.
+   */
+  it('keeps all three dialects distinct', () => {
+    const sqlite = resolveLibSqlDetection('/tmp/a.sqlite', { version: '3.49.1' }, true);
+    const libsql = resolveLibSqlDetection('/tmp/a.libsql', { version: '3.45.1-libsql' }, true);
+    const turso = resolveLibSqlDetection('/tmp/a.turso', { version: '0.8.1-turso' }, true);
+    assert.deepEqual([sqlite.engine, libsql.engine, turso.engine], ['sqlite', 'libsql', 'turso']);
+  });
+
+  it('lets a stronger signal override the extension', () => {
+    // A .turso NAME holding genuine libSQL content: the version string (80)
+    // outranks the extension (60) and wins.
+    const d = resolveLibSqlDetection('/tmp/mislabeled.turso', { version: '3.45.1-libsql' }, true);
+    assert.equal(d.engine, 'libsql');
+    assert.equal(d.decidedBy, 'version');
   });
 
   it('lets the strongest single signal decide, without summing', () => {

@@ -13,8 +13,9 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# test
+# Local command shim — not part of the extension sources.
 vsce.bat
-test/
+
+# Packaging output.
 dist/
 VSIX/

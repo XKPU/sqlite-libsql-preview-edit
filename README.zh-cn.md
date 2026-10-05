@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 K_PU
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # SQLite/LibSQL/Turso P&E
 
 ![SQLite/LibSQL/Turso P&E](icons/sqlite-libsql-preview-edit-64.png)
@@ -9,10 +14,23 @@
 
 一个 VS Code 扩展，用于预览和编辑 **SQLite / LibSQL / Turso** 数据库文件。
 
-### 引擎
+## 目录
 
-扩展运行于内置的 **原生 Turso Database 引擎**（`@tursodatabase/database`，即 SQLite 的Rust 实现）。
+- [驱动](#驱动)
+- [功能](#功能)
+- [支持的数据库](#支持的数据库)
+- [设置](#设置)
+- [诊断](#诊断)
+- [AI 声明](#ai-声明)
+- [支持](#支持)
+- [许可](#许可)
+
+## 驱动
+
+扩展运行于内置的 **原生 Turso Database 驱动**（`@tursodatabase/database`，即 SQLite 的 Rust 实现）。
 它直接打开本地文件，并读写通用的 `SQLite format 3` 容器格式，因此同一个编辑器即可处理 **SQLite、LibSQL 与 Turso Database** 三种文件。
+
+这是唯一的驱动，所有文件都由它处理。驱动与该标签的区别见[驱动与方言](#驱动与方言)。
 
 支持的架构：
 
@@ -23,15 +41,14 @@
 | Linux | x64、`arm64`（glibc） |
 
 Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
-若你的平台不在列表中，扩展将无法加载引擎。
+若你的平台不在列表中，扩展将无法加载驱动，任何数据库都无法打开。
 
-### 支持
+## 功能
 
-- `.db` / `.sqlite` / `.sqlite3` / `.libsql` 文件
+- `.db` / `.sqlite` / `.sqlite3` / `.libsql` / `.turso` 文件（见[支持的数据库](#支持的数据库)）
 - 标准 SQLite 功能集
-- Turso Database 扩展能力：序列（`CREATE SEQUENCE` / `nextval()`）、`STRICT` 表、
-  `ALTER TABLE … ALTER COLUMN`、向量函数、非常量默认值
-- 自动 LibSQL / Turso 检测
+- Turso Database 扩展能力：序列（`CREATE SEQUENCE` / `nextval()`）、`STRICT` 表、`ALTER TABLE … ALTER COLUMN`、向量函数、非常量默认值
+- 自动方言检测（SQLite、LibSQL 或 Turso Database）
 - UI 跟随 VS Code 主题颜色
 - 数据浏览器
 - SQL 语句编辑器
@@ -39,18 +56,46 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 - 只读模式
 - 英语和简体中文
 
-## LibSQL 检测
+## 支持的数据库
 
-默认 `SQLite`，检测按信号强度从高到低读取检测 `LibSQL`：
+支持三种文件类型，它们共用同一种磁盘容器（`SQLite format 3`）：
+
+| 类型 | 常见扩展名 | 识别方式 |
+| --- | --- | --- |
+| SQLite | `.db` `.sqlite` `.sqlite3` | 无其他信号时的默认值 |
+| LibSQL | `.libsql` | 扩展名、版本字符串、`libsql_*` 表或 pragma |
+| Turso Database | `.turso` | 扩展名或版本字符串 |
+
+由于容器相同，**三种文件都能直接打开 —— 识别结果从不决定文件能否打开**，它只决定所显示的语言。
+
+### 驱动与方言
+
+信息面板显示两个彼此独立的字段。
+
+**驱动（Driver）** —— 实际执行查询的实现，取值始终为 `turso`：Turso Database 是唯一内置的驱动，不存在回退。
+
+**方言（Dialect）** —— 文件所用的 SQL 方言，由文件自身推断得出，取值为 `SQLite`、`LibSQL` 或 `Turso Database`。
+
+方言仅用于显示说明：它不决定使用哪个驱动，不启用或禁用任何能力，也不影响语句的执行方式 —— 所有文件都由同一个驱动、以同一套功能集处理。`.db` 文件被显示为 `SQLite`，只是因为它描述的是文件内容，其支持的功能与 `.turso` 文件完全相同。
+
+信息面板中标注为 **Engine** 的一行，显示的就是方言值。
+
+### 检测
+
+取**最强的单个信号**决定，权重不累加 —— 一个确凿标记即足够，零散线索无法压倒它。
 
 | 信号 | 权重 |
 | --- | --- |
-| 引擎版本字符串 | 80 |
+| 版本字符串（Turso 标识） | 80 |
+| 版本字符串（LibSQL 标识） | 80 |
 | LibSQL 系统表 | 75 |
 | 引擎 pragma | 70 |
-| 文件扩展名 | 60 |
+| 文件扩展名（`.libsql` / `.turso`） | 60 |
 
-检测到 LibSQL 后，扩展启用 LibSQL 能力集。
+Turso 版本字符串**先于** LibSQL 检测，因为 LibSQL 的匹配模式也能命中 `turso`，
+否则会被误判为 LibSQL。
+
+无任何信号匹配时按普通 SQLite 处理。判定结果连同依据会显示在数据库信息面板中。
 
 ## 设置
 
@@ -59,6 +104,7 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 | `libSqlPreviewEdit.language` | `auto` | `auto`（跟随 VS Code）、`en` 或 `zh-cn`。变更实时生效。 |
 | `libSqlPreviewEdit.pageSize` | `50` | 数据浏览器每页显示的行数。 |
 | `libSqlPreviewEdit.readOnly` | `false` | 禁用所有写操作。 |
+| `libSqlPreviewEdit.readOnlyTables` | `[]` | 即使全局写入开关已启用，这些表也应按只读方式处理。 |
 | `libSqlPreviewEdit.confirmDestructiveActions` | `true` | 删除表、视图、索引、列前请求确认。 |
 | `libSqlPreviewEdit.nullDisplay` | `NULL` | 用于显示 SQL NULL 值的文本。 |
 | `libSqlPreviewEdit.maxCellLength` | `1000` | 超过此长度的单元格将被截断。 |
@@ -84,6 +130,13 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 所有 AI 生成或建议的内容均经人工审核、验证并按需调整。
 
 AI 的使用不改变本项目的开源许可证及第三方条款。
+
+## 支持
+
+获取帮助、报告缺陷，以及不在支持范围内的事项：**[SUPPORT.zh-cn.md](SUPPORT.zh-cn.md)**
+（[English](SUPPORT.md)）。
+
+报告安全漏洞：**[SECURITY.zh-cn.md](SECURITY.zh-cn.md)**（[English](SECURITY.md)）。
 
 ## 许可
 ```

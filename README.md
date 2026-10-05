@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 K_PU
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # SQLite/LibSQL/Turso P&E
 
 ![SQLite/LibSQL/Turso P&E](icons/sqlite-libsql-preview-edit-64.png)
@@ -9,10 +14,23 @@
 
 A VS Code extension for previewing and editing **SQLite / LibSQL / Turso** database files.
 
-### Engine
+## Contents
 
-The extension runs on the built-in **native Turso Database engine** (`@tursodatabase/database`, i.e., the Rust implementation of SQLite).
+- [Driver](#driver)
+- [Features](#features)
+- [Supported databases](#supported-databases)
+- [Settings](#settings)
+- [Diagnostics](#diagnostics)
+- [AI Disclosure](#ai-disclosure)
+- [Support](#support)
+- [License](#license)
+
+## Driver
+
+The extension runs on the built-in **native Turso Database driver** (`@tursodatabase/database`, i.e., the Rust implementation of SQLite).
 It directly opens local files and reads/writes the universal `SQLite format 3` container format, so the same editor can handle **SQLite, LibSQL, and Turso Database** files.
+
+This is the only driver, and it is used for every file. See [Driver vs dialect](#driver-vs-dialect) for how the label differs from the driver.
 
 Supported architectures:
 
@@ -23,15 +41,14 @@ Supported architectures:
 | Linux | x64, `arm64` (glibc) |
 
 macOS Intel, Alpine/musl, and Windows `arm64` are **not supported**.
-If your platform is not listed, the extension cannot load the engine.
+If your platform is not listed, the extension cannot load the driver, and no database can be opened.
 
-### Support
+## Features
 
-- `.db` / `.sqlite` / `.sqlite3` / `.libsql` files
+- `.db` / `.sqlite` / `.sqlite3` / `.libsql` / `.turso` files (see [Supported databases](#supported-databases))
 - Standard SQLite feature set
-- Turso Database extras: sequences (`CREATE SEQUENCE` / `nextval()`), `STRICT`
-  tables, `ALTER TABLE … ALTER COLUMN`, vector functions, non-constant defaults
-- Automatic LibSQL / Turso detection
+- Turso Database extras: sequences (`CREATE SEQUENCE` / `nextval()`), `STRICT` tables, `ALTER TABLE … ALTER COLUMN`, vector functions, non-constant defaults
+- Automatic dialect detection (SQLite, LibSQL, or Turso Database)
 - UI follows VS Code theme colors
 - Data browser
 - SQL statement editor
@@ -39,18 +56,49 @@ If your platform is not listed, the extension cannot load the engine.
 - Read-only mode
 - English and Simplified Chinese
 
-## LibSQL detection
+## Supported databases
 
-Defaults to `SQLite`; detection reads signals from strongest to weakest to detect `LibSQL`:
+Three file types are supported, and they share a single on-disk container
+(`SQLite format 3`):
+
+| Type | Typical extension | How it is recognised |
+| --- | --- | --- |
+| SQLite | `.db` `.sqlite` `.sqlite3` | the default when nothing else matches |
+| LibSQL | `.libsql` | extension, version string, `libsql_*` tables, or pragmas |
+| Turso Database | `.turso` | extension or version string |
+
+Because the container is shared, **all three open directly — recognition never decides whether a file can be opened.** It determines only the reported dialect.
+
+### Driver vs dialect
+
+The info panel reports two independent values.
+
+**Driver** — the implementation that executes queries. Its value is always `turso`: Turso Database is the only bundled driver and there is no fallback.
+
+**Dialect** — the SQL dialect the file is written in, inferred from the file itself. Its value is `SQLite`, `LibSQL`, or `Turso Database`.
+
+The dialect is reported for information only. It does not select the driver, enable or disable any capability, or affect how a statement is executed; every file is handled by the same driver with the same feature set. A `.db` file is reported as `SQLite` because that describes the file's content, and it supports everything a `.turso` file does.
+
+The info panel row labelled **Engine** shows the dialect value.
+
+### Detection
+
+The strongest single signal decides; weights are never summed, so one
+conclusive marker is enough and a stray hint cannot outvote it.
 
 | Signal | Weight |
 | --- | --- |
-| Engine version string | 80 |
+| Version string (Turso identifier) | 80 |
+| Version string (LibSQL identifier) | 80 |
 | LibSQL system tables | 75 |
 | Engine pragmas | 70 |
-| File extension | 60 |
+| File extension (`.libsql` / `.turso`) | 60 |
 
-Once LibSQL is detected, the extension enables the LibSQL capability set.
+A Turso version string is tested before the LibSQL one, because the LibSQL
+pattern also matches `turso` and would otherwise mislabel it.
+
+When no signal matches, the file is treated as plain SQLite. The verdict is
+shown in the database info panel together with the evidence that decided it.
 
 ## Settings
 
@@ -59,6 +107,7 @@ Once LibSQL is detected, the extension enables the LibSQL capability set.
 | `libSqlPreviewEdit.language` | `auto` | `auto` (follow VS Code), `en`, or `zh-cn`. Changes apply live. |
 | `libSqlPreviewEdit.pageSize` | `50` | Rows per page in the data browser. |
 | `libSqlPreviewEdit.readOnly` | `false` | Disable all write operations. |
+| `libSqlPreviewEdit.readOnlyTables` | `[]` | Tables treated as read-only even when the global write switch is enabled. |
 | `libSqlPreviewEdit.confirmDestructiveActions` | `true` | Ask before dropping tables, views, indexes, columns. |
 | `libSqlPreviewEdit.nullDisplay` | `NULL` | Text shown for SQL NULL values. |
 | `libSqlPreviewEdit.maxCellLength` | `1000` | Truncate cells longer than this. |
@@ -84,6 +133,13 @@ This project uses AI-assisted tools extensively in development, testing, documen
 All AI-generated or AI-suggested content is human-reviewed, verified, and adjusted as needed.
 
 AI usage does not change this project's open-source license and third-party terms.
+
+## Support
+
+Getting help, reporting bugs, and what is out of scope: **[SUPPORT.md](SUPPORT.md)**
+([简体中文](SUPPORT.zh-cn.md)).
+
+Reporting a security vulnerability: **[SECURITY.md](SECURITY.md)** ([简体中文](SECURITY.zh-cn.md)).
 
 ## License
 ```

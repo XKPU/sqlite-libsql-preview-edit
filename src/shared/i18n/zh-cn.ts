@@ -83,20 +83,22 @@ export const zhCn = {
   /* engine detection */
   'engine.sqlite': 'SQLite',
   'engine.libsql': 'LibSQL',
+  'engine.turso': 'Turso Database',
   'engine.detected': '已检测引擎：{engine}',
   'engine.libsql.active': 'LibSQL 特性已启用',
   'engine.libsql.fallback': 'LibSQL 文件由内置 SQLite 引擎打开',
   'engine.evidence': '检测依据',
 
   /* LibSQL capabilities */
-  'cap.title': 'LibSQL 能力',
+  'cap.title': '引擎能力',
   'cap.strictTables': 'STRICT 表',
   'cap.alterColumn': 'ALTER / DROP COLUMN',
   'cap.vectorSearch': '向量搜索',
   'cap.upsertReturning': 'UPSERT … RETURNING',
   'cap.embeddedReplicas': '嵌入式副本',
   'cap.nonConstantDefaults': '非常量默认值',
-  'cap.functions': 'LibSQL 函数',
+  'cap.sequences': '序列',
+  'cap.functions': '引擎函数',
   'cap.enabled': '已启用',
   'cap.disabled': '不可用',
 
