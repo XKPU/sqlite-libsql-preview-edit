@@ -146,6 +146,17 @@ jobs:
           npm ci
           node -e "console.log('requested', process.env.npm_config_platform || process.platform, process.env.npm_config_arch || process.arch, process.env.npm_config_libc || '')"
 
+      # The smoke test loads the COMPILED adapter (it exercises the real code path
+      # rather than the TypeScript source), so the extension must be built first.
+      # `npm ci` only installs dependencies and produces no `out/`, which is why
+      # this step exists — without it every platform fails with
+      # "Compiled adapter not found in out/extension/adapter/".
+      #
+      # Only the extension is compiled here; the webview bundle is built later by
+      # the packaging step, which needs it anyway.
+      - name: Compile the extension
+        run: npm run compile:extension
+
       # Prove the binary that will be shipped actually loads and can open a
       # database. A packaging mistake that drops the native module is otherwise
       # only discovered by users at runtime.
