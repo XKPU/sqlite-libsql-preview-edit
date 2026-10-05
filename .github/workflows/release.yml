@@ -1,0 +1,193 @@
+# SPDX-FileCopyrightText: 2026 K_PU
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Build one platform-specific VSIX per target and upload them as workflow
+# artifacts. This workflow deliberately does NOT publish to the Marketplace:
+# the maintainer downloads the artifacts and publishes them manually.
+#
+# WHY PER-PLATFORM AT ALL
+# ----------------------
+# The extension's database engine is the NATIVE `@tursodatabase/database`
+# (Turso Database), which loads a platform-specific binary from one of its
+# `@tursodatabase/database-<platform>` optional dependencies. Only the binary for
+# the machine that runs `npm install` ends up in node_modules, so a single VSIX
+# cannot contain every platform's runtime. VS Code solves this with a `--target`
+# suffix: the Marketplace stores one VSIX per target under the same version, and
+# each user's VS Code downloads the one matching their OS/arch.
+#
+# (A WASM client would avoid this, but the previously evaluated
+# `@libsql/client-wasm` cannot open a database file — an absolute path fails
+# with SQLITE_CANTOPEN and a relative one silently becomes an in-memory DB — so
+# it is not an option.)
+#
+# The target list mirrors the platform packages `@tursodatabase/database`
+# declares as optional dependencies. Upstream ships EXACTLY FOUR:
+#   darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc
+#
+# DELIBERATELY UNSUPPORTED — upstream publishes NO binary for these, so no VSIX
+# can be built for them and they must not appear in the matrix:
+#   - darwin-x64    (macOS on Intel: no `database-darwin-x64` package exists)
+#   - musl/Alpine   (`alpine-x64`, `alpine-arm64`: the Linux builds are
+#                    glibc-only, there is no musl package)
+#   - win32-arm64   (no arm64 Windows build)
+# If upstream ever adds a platform, add it here too.
+name: Build platform VSIXs
+
+# MANUAL ONLY. There is deliberately no `push` or `pull_request` trigger: this
+# workflow builds release artifacts, so it must never run on its own. Start it
+# from the Actions tab ("Run workflow") when you actually want the VSIXs.
+#
+# There are no inputs: the version is always read from `package.json`, so the
+# artifacts can never disagree with the manifest that was packaged. Bump the
+# manifest before dispatching.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fail fast, once, on a normal runner: lint, typecheck, tests and the repo's
+  # own quality gates. The per-platform jobs below only build and package, so a
+  # broken commit does not produce a dozen equally-broken artifacts.
+  verify:
+    name: Verify sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # The native runtime is not needed to typecheck or run the unit tests,
+      # but `npm ci` must succeed on a supported platform.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Quality gates (dead code, duplication, message router)
+        run: |
+          npm run verify:deadcode
+          npm run verify:duplication
+          npm run verify:router
+
+  package:
+    name: Package ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One failing platform must not hide the others' results.
+      fail-fast: false
+      matrix:
+        include:
+          # --- Windows -------------------------------------------------------
+          - os: windows-latest
+            target: win32-x64
+            vsce_target: win32-x64
+          # win32-arm64 is NOT built: `@tursodatabase/database` ships no arm64
+          # Windows binary, so an install would only ever fetch the x64 one.
+          # --- macOS: runner arch decides the binary -------------------------
+          # Only the Apple-silicon build exists upstream; there is no
+          # `database-darwin-x64`, so macOS Intel is unsupported.
+          - os: macos-14
+            target: darwin-arm64
+            vsce_target: darwin-arm64
+          # --- Linux (glibc) -------------------------------------------------
+          - os: ubuntu-latest
+            target: linux-x64
+            vsce_target: linux-x64
+          # linux-arm64 is cross-installed on an x64 runner via npm's
+          # target-arch environment variables.
+          - os: ubuntu-latest
+            target: linux-arm64
+            vsce_target: linux-arm64
+            npm_config_arch: arm64
+            npm_config_platform: linux
+          # Alpine (musl) is NOT built: the upstream Linux binaries are
+          # glibc-only, so there is no musl package to install.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Caches only the npm DOWNLOAD cache (~/.npm), which is platform
+          # independent. The installed node_modules is NOT cached, so each matrix
+          # entry installs its own platform's optional dependency below.
+          cache: npm
+
+      # Install the dependency tree for THIS target. The cross-install env vars
+      # (varies per matrix entry) make npm fetch the matching
+      # @tursodatabase/database-<platform> optional dependency instead of the
+      # host's.
+      #
+      # `npm ci` is used (not `npm install`) so the lockfile is authoritative.
+      # The native packages are OPTIONAL dependencies, so npm silently skips the
+      # ones that do not match the requested platform — which is exactly why the
+      # smoke test below must confirm the right binary landed.
+      - name: Install dependencies for ${{ matrix.target }}
+        env:
+          npm_config_arch: ${{ matrix.npm_config_arch }}
+          npm_config_platform: ${{ matrix.npm_config_platform }}
+          npm_config_libc: ${{ matrix.npm_config_libc }}
+        run: |
+          npm ci
+          node -e "console.log('requested', process.env.npm_config_platform || process.platform, process.env.npm_config_arch || process.arch, process.env.npm_config_libc || '')"
+
+      # Prove the binary that will be shipped actually loads and can open a
+      # database. A packaging mistake that drops the native module is otherwise
+      # only discovered by users at runtime.
+      - name: Smoke-test the native engine
+        run: node scripts/smoke-native.js
+        env:
+          npm_config_arch: ${{ matrix.npm_config_arch }}
+          npm_config_platform: ${{ matrix.npm_config_platform }}
+          npm_config_libc: ${{ matrix.npm_config_libc }}
+
+      - name: Package targeted VSIX (${{ matrix.vsce_target }})
+        shell: bash
+        run: |
+          npm run compile
+          # Same output layout as `npm run package:target`: VSIX/<version>/.
+          # Read the version from package.json so this can never drift from the
+          # manifest that vsce actually packaged.
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p "VSIX/$VERSION"
+          # NOTE: do NOT pass --no-dependencies. That flag stops vsce from
+          # walking the dependency tree, so `node_modules/@tursodatabase/**`
+          # never reaches the archive and the installed extension cannot load
+          # its engine at all. `.vscodeignore` is what controls the contents.
+          node node_modules/vsce/vsce package \
+            --target "${{ matrix.vsce_target }}" \
+            -o "VSIX/$VERSION/sqlite-libsql-preview-edit-${{ matrix.vsce_target }}.vsix"
+
+      - name: Show what was packaged
+        shell: bash
+        run: ls -la VSIX/*/
+
+      - name: Verify the VSIX carries the native runtime
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          node scripts/verify-vsix.js "VSIX/$VERSION/sqlite-libsql-preview-edit-${{ matrix.vsce_target }}.vsix"
+
+      # Plain `actions/upload-artifact`, one artifact per target, so the
+      # maintainer can download exactly the platform(s) they need.
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: VSIX/*/*.vsix
+          if-no-files-found: error
+          retention-days: 30
