@@ -14,14 +14,16 @@ A VS Code extension for previewing and editing **SQLite / LibSQL / Turso** datab
 The extension runs on the built-in **native Turso Database engine** (`@tursodatabase/database`, i.e., the Rust implementation of SQLite).
 It directly opens local files and reads/writes the universal `SQLite format 3` container format, so the same editor can handle **SQLite, LibSQL, and Turso Database** files.
 
-Only the following targets are supported:
+Supported architectures:
 
-- Windows x64
-- macOS Apple silicon (`arm64`)
-- Linux x64 and Linux `arm64` (glibc)
+| OS | Architecture |
+| --- | --- |
+| Windows | x64 |
+| macOS | Apple silicon (`arm64`) |
+| Linux | x64, `arm64` (glibc) |
 
-Intel macOS, Alpine/musl, and Windows `arm64` are **not supported**, because upstream has not released corresponding binaries.
-If your platform is not in the list, the extension will be unable to load the engine.
+macOS Intel, Alpine/musl, and Windows `arm64` are **not supported**.
+If your platform is not listed, the extension cannot load the engine.
 
 ### Support
 

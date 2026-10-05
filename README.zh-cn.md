@@ -14,13 +14,15 @@
 扩展运行于内置的 **原生 Turso Database 引擎**（`@tursodatabase/database`，即 SQLite 的Rust 实现）。
 它直接打开本地文件，并读写通用的 `SQLite format 3` 容器格式，因此同一个编辑器即可处理 **SQLite、LibSQL 与 Turso Database** 三种文件。
 
-仅支持以下目标：
+支持的架构：
 
-- Windows x64
-- macOS Apple 芯片（`arm64`）
-- Linux x64 与 Linux `arm64`（glibc）
+| 系统 | 架构 |
+| --- | --- |
+| Windows | x64 |
+| macOS | Apple 芯片（`arm64`） |
+| Linux | x64、`arm64`（glibc） |
 
-Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**，因为上游未发布对应二进制。
+Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 若你的平台不在列表中，扩展将无法加载引擎。
 
 ### 支持
