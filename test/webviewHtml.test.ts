@@ -17,7 +17,7 @@ const VITE_HTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline';" />
-    <title>SQLite/LibSQL Preview&amp;Edit</title>
+    <title>SQLite/LibSQL/Turso P&amp;E</title>
     <script type="module" crossorigin src="./assets/index.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index.css">
   </head>

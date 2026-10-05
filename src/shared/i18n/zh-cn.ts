@@ -15,7 +15,9 @@ export const zhCn = {
   'cmd.close': '关闭',
   'cmd.info': '数据库信息',
   'cmd.sqlEditor': '打开 SQL 编辑器',
-  'cmd.addObject': '添加对象',
+  'cmd.newTableDialog': '新建表',
+  'cmd.openSettings': '打开设置',
+  'cmd.clearCache': '清除缓存',
 
   /* webview messages */
   'msg.loading': '正在加载数据库…',
@@ -103,6 +105,8 @@ export const zhCn = {
   'tree.views': '视图',
   'tree.indexes': '索引',
   'tree.triggers': '触发器',
+  'tree.sequences': '序列',
+  'tree.dataTypes': '数据类型',
   'tree.system': '系统 / SQLite 元数据',
   'tree.search': '搜索对象…',
   'tree.none': '没有对象',
@@ -110,6 +114,7 @@ export const zhCn = {
   /* context menu */
   'menu.viewData': '查看数据',
   'menu.viewSchema': '查看结构',
+  'menu.properties': '属性',
   'menu.genSelect': '生成 SELECT',
   'menu.exportTable': '导出表',
   'menu.importTable': '导入到表',
@@ -160,6 +165,26 @@ export const zhCn = {
   'sql.errorLine': '第 {line} 行，第 {col} 列',
   'sql.errorCopy': '复制错误',
   'sql.execute': '执行',
+
+  /* sequence properties */
+  'seq.title': '序列',
+  'seq.note': 'SQLite 只保存 AUTOINCREMENT 序列的当前计数器值。',
+  'seq.name': '名称',
+  'seq.value': '数值',
+  'seq.min': '最小值',
+  'seq.max': '最大值',
+  'seq.increment': '增量',
+
+  /* data-type reference view */
+  'dt.title': '数据类型',
+  'dt.subtitle': '声明类型与 SQLite 实际应用的亲和性',
+  'dt.affinity': '亲和性',
+  'dt.types': 'SQLite 数据类型',
+  'dt.name': '类型',
+  'dt.size': '存储大小',
+  'dt.example': '示例',
+  'dt.note': '说明',
+  'dt.usage': '用法',
 
   /* structure view */
   'struct.title': '结构',
@@ -223,6 +248,46 @@ export const zhCn = {
   'struct.indexNamePlaceholder': 'idx_name',
   'struct.typeNone': '— 无 —',
 
+  /* new table */
+  'newTable.title': '新建表',
+  'newTable.create': '创建',
+  'newTable.tableName': '表名',
+  'newTable.tableNamePlaceholder': '例如 users',
+  'newTable.idColumn': '主键列',
+  'newTable.idColumnPlaceholder': '例如 id',
+  'newTable.autoIncrement': '主键自增',
+  'newTable.sequence': '序列',
+  'newTable.sequencePlaceholder': '例如 users_id_seq',
+  'newTable.startValue': '起始值',
+  'newTable.incrementBy': '步长',
+  'newTable.minValue': '最小值',
+  'newTable.maxValue': '最大值',
+  'newTable.defaultHint': '默认',
+  'newTable.preview': 'SQL 预览',
+  'newTable.sequenceUnavailable':
+    '使用序列生成主键需要 Turso Database 的 CREATE SEQUENCE 扩展，SQLite 与 libSQL 均未实现该扩展，因此当前数据库无法使用此选项。',
+  'newTable.created': '表已创建',
+
+  'err.newTable.nameRequired': '请输入表名。',
+  'err.newTable.nameInvalid': '表名中包含无法使用的字符。',
+  'err.newTable.nameExists': '已存在同名的表或视图。',
+  'err.newTable.idRequired': '请输入主键列名。',
+  'err.newTable.idInvalid': '列名中包含无法使用的字符。',
+  'err.newTable.seqNameRequired': '请输入序列名。',
+  'err.newTable.seqNameInvalid': '序列名中包含无法使用的字符。',
+  'err.newTable.seqNameIsTable': '序列名不能与表名相同。',
+  'err.newTable.seqNameIsColumn': '序列名不能与主键列名相同。',
+  'err.newTable.startInvalid': '起始值必须是整数。',
+  'err.newTable.incrementInvalid': '步长必须是整数。',
+  'err.newTable.minInvalid': '最小值必须是整数。',
+  'err.newTable.maxInvalid': '最大值必须是整数。',
+  'err.newTable.incrementZero': '步长不能为 0。',
+  'err.newTable.minNotBelowMax': '最小值必须小于最大值。',
+  'err.newTable.startBelowMin': '递增序列的起始值不能小于最小值。',
+  'err.newTable.startAboveMax': '递减序列的起始值不能大于最大值。',
+  'err.newTable.seqUnsupported': '当前数据库不支持序列，无法由序列生成主键值。',
+  'warn.newTable.seqNameSameAsId': '序列名与主键列名相同。',
+
   /* language */
   'language': '语言',
   'language.en': '英语',
@@ -254,5 +319,5 @@ export const zhCn = {
   'confirm': '确认',
   'loading': '加载中…',
   'unknown': '未知',
-  'empty': '—'
+  'empty': '—',
 } as const;

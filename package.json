@@ -4,7 +4,7 @@
   "name": "sqlite-libsql-preview-edit",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "U-EPTM",
   "license": "AGPL-3.0-or-later",
   "private": false,
@@ -23,8 +23,9 @@
     "onCommand:libSqlPreviewEdit.close",
     "onCommand:libSqlPreviewEdit.showInfo",
     "onCommand:libSqlPreviewEdit.openSqlEditor",
-    "onCommand:libSqlPreviewEdit.addObject",
-    "onCommand:libSqlPreviewEdit.showLog"
+    "onCommand:libSqlPreviewEdit.newTableDialog",
+    "onCommand:libSqlPreviewEdit.showLog",
+    "onCommand:libSqlPreviewEdit.openSettings"
   ],
   "icon": "icons/sqlite-libsql-preview-edit.png",
   "categories": [
@@ -94,14 +95,24 @@
         "icon": "$(edit)"
       },
       {
-        "command": "libSqlPreviewEdit.addObject",
-        "title": "%command.addObject%",
+        "command": "libSqlPreviewEdit.newTableDialog",
+        "title": "%command.newTableDialog%",
         "icon": "$(add)"
       },
       {
         "command": "libSqlPreviewEdit.showLog",
         "title": "%command.showLog%",
         "icon": "$(output)"
+      },
+      {
+        "command": "libSqlPreviewEdit.openSettings",
+        "title": "%command.openSettings%",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "libSqlPreviewEdit.clearCache",
+        "title": "%command.clearCache%",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -139,7 +150,7 @@
           "group": "1_modification"
         },
         {
-          "command": "libSqlPreviewEdit.addObject",
+          "command": "libSqlPreviewEdit.newTableDialog",
           "when": "customEditorProvider == libSqlPreviewEdit.editor",
           "group": "1_modification"
         }
@@ -173,16 +184,25 @@
           "order": 3,
           "description": "%config.readOnly%"
         },
+        "libSqlPreviewEdit.readOnlyTables": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 4,
+          "description": "%config.readOnlyTables%"
+        },
         "libSqlPreviewEdit.confirmDestructiveActions": {
           "type": "boolean",
           "default": true,
-          "order": 4,
+          "order": 5,
           "description": "%config.confirmDestructiveActions%"
         },
         "libSqlPreviewEdit.nullDisplay": {
           "type": "string",
           "default": "NULL",
-          "order": 5,
+          "order": 6,
           "description": "%config.nullDisplay%"
         },
         "libSqlPreviewEdit.maxCellLength": {
@@ -190,7 +210,7 @@
           "default": 1000,
           "minimum": 0,
           "maximum": 1000000,
-          "order": 6,
+          "order": 7,
           "description": "%config.maxCellLength%"
         },
         "libSqlPreviewEdit.exportEncoding": {
@@ -202,7 +222,7 @@
             "base64"
           ],
           "default": "utf8",
-          "order": 7,
+          "order": 8,
           "description": "%config.exportEncoding%"
         }
       }
@@ -222,18 +242,15 @@
     "verify:deadcode": "node scripts/dead-code-scan.js",
     "verify:duplication": "node scripts/dupe-heatmap.js 8 --max=500",
     "verify": "npm run verify:deadcode && npm run verify:duplication && npm run verify:router && npm run verify:vsix",
-    "package": "npm run compile && node node_modules/vsce/vsce package"
+    "smoke:native": "node scripts/smoke-native.js",
+    "package": "npm run compile && node scripts/package-untargeted.js",
+    "package:target": "npm run compile && node scripts/package-target.js"
   },
   "dependencies": {
-    "@libsql/client": "^0.14.0",
-    "@neon-rs/load": "^0.0.4",
-    "detect-libc": "2.0.2",
-    "promise-limit": "^2.7.0",
-    "ws": "^8.22.0"
+    "@tursodatabase/database": "^0.8.1"
   },
   "devDependencies": {
-    "sql.js": "^1.11.0",
-    "@types/node": "^20.14.0",
+    "@types/node": "^20.19.43",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.90.0",

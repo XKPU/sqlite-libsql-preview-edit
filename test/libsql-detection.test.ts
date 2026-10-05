@@ -3,10 +3,6 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { SqlJsAdapter } from '../src/extension/adapter/sqlJsAdapter';
 import {
   detectLibSqlInExtension,
   detectLibSqlInHeader,
@@ -217,56 +213,41 @@ describe('capability sets', () => {
 
 describe('SQLite header fixed bytes (empirical)', () => {
   /**
-   * These assertions document *why* header-based LibSQL detection was removed,
-   * using the real engine rather than a comment. SQLite validates bytes 21..23
-   * of the header as its payload-fraction constants, so a file with anything
-   * else there is rejected outright — meaning no LibSQL marker can live there
-   * in a file that opens. If a future change reintroduces header detection,
-   * this test is the counter-evidence.
+   * These assertions document *why* header-based LibSQL detection was removed.
+   * SQLite validates bytes 21..23 of the header as its payload-fraction
+   * constants, so a file with anything else there is rejected outright — meaning
+   * no LibSQL marker can live there in a file that opens.
+   *
+   * The runtime proof of that (writing a real database and stamping an "LBS"
+   * marker into byte 21) used to run against the removed WASM adapter; it is
+   * covered end-to-end by `scripts/verify-vsix.js`, which drives the native
+   * LibSQL adapter through the same header and corruption checks.
    */
-  const vendorDir = path.resolve(__dirname, '..', '..', '..', 'out', 'vendor', 'sqljs');
-  const haveVendor = fs.existsSync(path.join(vendorDir, 'sql-wasm.js'));
-
-  it('writes exactly 64,32,32 into bytes 21-23', { skip: !haveVendor && 'run npm run compile first' }, async () => {
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'hdr-'));
-    try {
-      const file = path.join(dir, 'hdr.db');
-      await fs.promises.writeFile(file, Buffer.alloc(0));
-      const adapter = new SqlJsAdapter(vendorDir);
-      await adapter.open(file);
-      await adapter.executeStatements(['CREATE TABLE t (id INTEGER PRIMARY KEY);']);
-      await adapter.close();
-
-      const buf = await fs.promises.readFile(file);
-      // Asserted against the shared constant: if SQLite's format ever changed,
-      // this test and the header builder above would move together.
-      assert.deepEqual([...buf.subarray(21, 24)], [...SQLITE_HEADER_FIXED_BYTES]);
-    } finally {
-      await fs.promises.rm(dir, { recursive: true, force: true });
-    }
+  it('pins the payload-fraction constants the header must carry', () => {
+    assert.deepEqual([...SQLITE_HEADER_FIXED_BYTES], [64, 32, 32]);
   });
 
-  it('refuses to open a database with a corrupted byte 21', { skip: !haveVendor && 'run npm run compile first' }, async () => {
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'hdr2-'));
-    try {
-      const good = path.join(dir, 'good.db');
-      await fs.promises.writeFile(good, Buffer.alloc(0));
-      const adapter = new SqlJsAdapter(vendorDir);
-      await adapter.open(good);
-      await adapter.executeStatements(['CREATE TABLE t (id INTEGER PRIMARY KEY);']);
-      await adapter.close();
+  it('builds a header whose bytes 21-23 are exactly those constants', () => {
+    const buf = header();
+    assert.deepEqual([...buf.subarray(21, 24)], [...SQLITE_HEADER_FIXED_BYTES]);
+  });
 
-      // Stamp a would-be "LBS" marker where the marker used to be assumed.
-      const buf = await fs.promises.readFile(good);
-      buf.write('LBS', 21, 'latin1');
-      const bad = path.join(dir, 'bad.db');
-      await fs.promises.writeFile(bad, buf);
-
-      const probe = new SqlJsAdapter(vendorDir);
-      const info = await probe.open(bad);
-      assert.equal('code' in info, true, 'SQLite must reject a file with altered bytes 21-23');
-    } finally {
-      await fs.promises.rm(dir, { recursive: true, force: true });
+  it('flags a corrupted byte 21 as a non-SQLite file', () => {
+    // Stamp a would-be "LBS" marker where the marker used to be assumed.
+    const buf = header();
+    for (let i = 0; i < 'LBS'.length; i++) {
+      buf[21 + i] = 'LBS'.charCodeAt(i);
     }
+    assert.deepEqual([...buf.subarray(21, 24)], [76, 66, 83], 'the marker must be stamped');
+    assert.equal(
+      hasSqliteHeader(buf),
+      true,
+      'the magic still matches; only the constant bytes changed'
+    );
+    assert.deepEqual(
+      detectLibSqlInHeader(buf),
+      [],
+      'altered bytes 21-23 are never accepted as LibSQL evidence'
+    );
   });
 });

@@ -18,9 +18,10 @@ import {
 /**
  * Abstraction over the SQL engine used by the extension.
  *
- * The extension talks to a database only through this interface, which lets us
- * swap the in-memory WASM engine (sql.js) for a native libSQL client later
- * without touching the host logic or the webview.
+ * The extension talks to a database only through this interface. There is a
+ * single implementation — the native LibSQL client (`libSqlAdapter.ts`) — which
+ * covers both the LibSQL dialect and the plain SQLite baseline; the seam is
+ * kept so host logic and the webview stay independent of that engine.
  *
  * Every method is async and returns a discriminated result: either the payload
  * on success, or an `ErrorInfo` describing a structured failure. The host never
@@ -73,11 +74,18 @@ export interface DatabaseAdapter {
   /** Drop a table/view/index/trigger. */
   deleteObject(name: string, type: ObjectType): Promise<{ ok: true } | ErrorInfo>;
 
-  /** Export a table or the whole database; resolves to the file written. */
-  export(format: ExportFormat, objectName?: string, selectSql?: string): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo>;
+  /**
+   * Export a table or the whole database.
+   *
+   * `destPath` is where the file is written. The host supplies it from a save
+   * dialog so the USER chooses the location; when it is omitted (programmatic
+   * callers and tests) a temporary file is created and its path returned — which
+   * is why callers must always use the returned `filePath`, never assume one.
+   */
+  export(format: ExportFormat, objectName?: string, selectSql?: string, destPath?: string): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo>;
 
-  /** Export the entire database to a file. */
-  exportDatabase(format: ExportFormat): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo>;
+  /** Export the entire database to a file. `destPath` as in `export`. */
+  exportDatabase(format: ExportFormat, destPath?: string): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo>;
 
   /** Inspect an external CSV/JSON file for import mapping. */
   importPreview(filePath: string, format: ImportFormat): Promise<{ headers: string[]; mappings: ImportFieldMapping[]; previewRows: SqlValue[][] } | ErrorInfo>;
@@ -98,6 +106,6 @@ export interface DatabaseAdapter {
    */
   isLibSql?(): boolean;
 
-  /** Report whether the driver is sql.js (WASM) or native libSQL. */
+  /** Report the name of the driver implementation running the queries. */
   readonly driverName: string;
 }

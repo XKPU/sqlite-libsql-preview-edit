@@ -32,7 +32,6 @@ const allFiles = [
   ...walk(path.join(root, 'test')),
   path.join(root, 'scripts', 'test-runner.js'),
   path.join(root, 'scripts', 'verify-message-router.js'),
-  path.join(root, 'scripts', 'vendor-sqljs.js'),
   path.join(root, 'vite.config.ts'),
   path.join(root, 'package.json')
 ].filter((f) => fs.existsSync(f));

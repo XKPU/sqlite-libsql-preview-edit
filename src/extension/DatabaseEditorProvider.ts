@@ -3,11 +3,13 @@
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { DatabaseAdapter } from './adapter/adapter';
 import { LibSqlAdapter } from './adapter/libSqlAdapter';
-import { SqlJsAdapter } from './adapter/sqlJsAdapter';
 import {
   ErrorInfo,
+  ExportFormat,
   HostRequest,
   HostResponse,
   ObjectType,
@@ -88,19 +90,17 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
   }
 
   /**
-   * Create the database adapter. Prefers the native LibSQL engine (full feature
-   * support) and falls back to the WASM sql.js engine when the native module
-   * is unavailable (e.g. unsupported platform, sandbox restrictions).
+   * Create the database adapter — the native Turso Database engine.
+   *
+   * There is exactly one engine: `@tursodatabase/database`, a local-file engine
+   * that reads and writes the shared `SQLite format 3` container. Because the
+   * three dialects share that container, this single adapter opens SQLite,
+   * libSQL and Turso Database files alike, so there is no fallback path to
+   * select between. The packaged VSIX must ship the engine's native binary,
+   * otherwise construction fails immediately.
    */
   private createAdapter(): DatabaseAdapter {
-    // Prefer the native LibSQL engine at startup; fall back only if the module
-    // is unavailable. The packaged VSIX must ship `js-base64` alongside the
-    // LibSQL runtime, otherwise the native path fails immediately.
-    try {
-      return new LibSqlAdapter();
-    } catch {
-      return new SqlJsAdapter(this.context.asAbsolutePath('out/vendor/sqljs'));
-    }
+    return new LibSqlAdapter();
   }
 
   /* ------------------------------- lifecycle ---------------------------- */
@@ -284,6 +284,9 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
           await this.state.setLanguage(msg.language);
           respond({ id: msg.id, type: 'languageChanged', language: this.state.language, settings: this.state.getWebviewSettings() });
           return;
+        case 'openSettings':
+          await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:u-eptm.sqlite-libsql-preview-edit');
+          return;
         case 'getInfo':
           await answer(
             () => adapter.getInfo(),
@@ -353,26 +356,42 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
           return;
         case 'export':
           await answer(
-            () => adapter.export(msg.format, msg.objectName, msg.selectSql),
-            (r) => ({
-              id: msg.id,
-              type: 'exported',
-              filePath: r.filePath,
-              sizeBytes: r.sizeBytes,
-              format: msg.format
-            })
+            async () => {
+              // Ask where to save BEFORE doing the work: a cancelled dialog must
+              // not leave a half-written file or waste a full table scan.
+              const dest = await this.askExportPath(msg.format, msg.objectName);
+              if (!dest) return { cancelled: true } as const;
+              return adapter.export(msg.format, msg.objectName, msg.selectSql, dest);
+            },
+            (r) =>
+              'cancelled' in r
+                ? { id: msg.id, type: 'exportCancelled', format: msg.format }
+                : {
+                    id: msg.id,
+                    type: 'exported',
+                    filePath: (r as { filePath: string }).filePath,
+                    sizeBytes: (r as { sizeBytes: number }).sizeBytes,
+                    format: msg.format
+                  }
           );
           return;
         case 'exportDatabase':
           await answer(
-            () => adapter.exportDatabase(msg.format),
-            (r) => ({
-              id: msg.id,
-              type: 'exported',
-              filePath: r.filePath,
-              sizeBytes: r.sizeBytes,
-              format: msg.format
-            })
+            async () => {
+              const dest = await this.askExportPath(msg.format);
+              if (!dest) return { cancelled: true } as const;
+              return adapter.exportDatabase(msg.format, dest);
+            },
+            (r) =>
+              'cancelled' in r
+                ? { id: msg.id, type: 'exportCancelled', format: msg.format }
+                : {
+                    id: msg.id,
+                    type: 'exported',
+                    filePath: (r as { filePath: string }).filePath,
+                    sizeBytes: (r as { sizeBytes: number }).sizeBytes,
+                    format: msg.format
+                  }
           );
           return;
         case 'importPreview':
@@ -496,6 +515,49 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
     }
   }
 
+  /**
+   * Ask the user where an export should be written.
+   *
+   * Exports used to be saved into a private temporary directory and the path
+   * merely reported in a toast, so the file was effectively lost to the user:
+   * they never chose a location and had no practical way to open the result.
+   *
+   * Returns `undefined` when the user dismisses the dialog, so the caller can
+   * tell "cancelled" apart from "failed" and avoid writing anything at all.
+   */
+  private async askExportPath(format: ExportFormat, objectName?: string): Promise<string | undefined> {
+    // Suggested name: the object being exported, else the database file's own
+    // name, so the default is meaningful instead of a generic "database.sql".
+    const stem = objectName ?? this.dbFileStem() ?? 'database';
+    const filters: Record<string, string[]> =
+      format === 'sql' ? { SQL: ['sql'] } : format === 'json' ? { JSON: ['json'] } : { CSV: ['csv'] };
+
+    const picked = await vscode.window.showSaveDialog({
+      title: `Export ${objectName ?? 'database'}`,
+      defaultUri: vscode.Uri.file(path.join(this.exportDefaultDir(), `${stem}.${format}`)),
+      filters,
+      saveLabel: 'Export'
+    });
+    return picked?.fsPath;
+  }
+
+  /** Open database's directory, so the save dialog starts somewhere relevant. */
+  private exportDefaultDir(): string {
+    const uri = this.activeDocumentUri();
+    return uri ? path.dirname(uri.fsPath) : os.homedir();
+  }
+
+  /** Open database's file name without its extension, or undefined. */
+  private dbFileStem(): string | undefined {
+    const uri = this.activeDocumentUri();
+    return uri ? path.basename(uri.fsPath, path.extname(uri.fsPath)) : undefined;
+  }
+
+  private activeDocumentUri(): vscode.Uri | undefined {
+    if (!this.lastActivePanel) return undefined;
+    return this.sessions.get(this.lastActivePanel)?.document.uri;
+  }
+
   private deleteTitle(type: ObjectType, name: string): string {
     switch (type) {
       case 'table':
@@ -606,7 +668,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
   private notBuiltHtml(): string {
     return (
       '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
-      '<h1>SQLite/LibSQL Preview&amp;Edit</h1>' +
+      '<h1>SQLite/LibSQL/Turso P&amp;E</h1>' +
       '<p>The webview has not been built yet. Run <code>npm run compile</code>.</p>' +
       '</body></html>'
     );

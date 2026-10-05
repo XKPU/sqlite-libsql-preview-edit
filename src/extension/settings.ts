@@ -43,6 +43,7 @@ export class ExtensionState {
       language: this.i18n.language,
       pageSize: this.settings.get<number>('pageSize', 50) || 50,
       readOnly: this.settings.get<boolean>('readOnly', false) || false,
+      readOnlyTables: this.settings.get<string[]>('readOnlyTables', []) ?? [],
       confirmDestructiveActions: this.settings.get<boolean>('confirmDestructiveActions', true) ?? true,
       nullDisplay: this.settings.get<string>('nullDisplay', 'NULL') ?? 'NULL',
       maxCellLength: this.settings.get<number>('maxCellLength', 1000) ?? 1000,

@@ -4,10 +4,6 @@ out/
 # Dependencies.
 node_modules/
 
-# Packaged artifact — produced by `npm run package`.
-*.vsix
-.vsix-stage/
-
 # TypeScript incremental build info.
 *.tsbuildinfo
 
@@ -17,9 +13,8 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Local database files are user data, not source. They are excluded from the
-# VSIX for the same reason (see .vscodeignore).
-*.db
-*.sqlite
-*.sqlite3
-*.libsql
+# test
+vsce.bat
+test/
+dist/
+VSIX/

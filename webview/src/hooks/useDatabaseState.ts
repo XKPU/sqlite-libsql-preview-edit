@@ -16,7 +16,9 @@ import type {
   SqlValue,
   WebviewSettings
 } from '../../../src/shared/protocol';
-import { quoteIdent, rowEditKey } from '../../../src/shared/protocol';
+import { quoteIdent, rowEditKey, SQLITE_CAPABILITIES } from '../../../src/shared/protocol';
+import type { NewTableOptions } from '../../../src/shared/ddl';
+import { buildNewTablePlan } from '../../../src/shared/ddl';
 import type { MessageKey } from '../i18n';
 import { useI18n } from '../i18n';
 import type { HostMessageHandler } from './useWebview';
@@ -86,11 +88,12 @@ export interface Toast {
   message: string;
 }
 
-export type CenterTab = 'data' | 'structure' | 'sql';
+export type CenterTab = 'data' | 'properties' | 'sql';
 
 export interface ActiveSelection {
-  kind: 'table' | 'view' | 'index' | 'trigger';
+  kind: 'table' | 'view' | 'index' | 'trigger' | 'sequence' | 'dataType';
   name: string;
+  seq?: number;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -125,6 +128,7 @@ export interface DatabaseState {
   importPreviewState: ImportPreviewState | null;
   activeImportTable: string | null;
   showExportDialog: boolean;
+  showNewTableDialog: boolean;
   exportScope: 'table' | 'database' | 'sql';
   /**
    * Set when the file failed to open (corrupt, missing, unreadable).
@@ -134,9 +138,13 @@ export interface DatabaseState {
    */
   loadError: ErrorInfo | null;
 
+  openNewTableDialog: () => void;
+  closeNewTableDialog: () => void;
+  createTable: (options: NewTableOptions) => Promise<void>;
   selectTable: (name: string) => void;
   selectObject: (obj: ObjectInfo) => void;
   openStructure: (name: string) => void;
+  openSettings: () => Promise<void>;
   switchTab: (tab: CenterTab) => void;
   refresh: () => Promise<void>;
   reopen: () => Promise<void>;
@@ -234,10 +242,22 @@ export function useDatabaseState(): DatabaseState {
   const [activeImportTable, setActiveImportTable] = useState<string | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportScope, setExportScope] = useState<'table' | 'database' | 'sql'>('table');
+  const [showNewTableDialog, setShowNewTableDialog] = useState(false);
   const [loadError, setLoadError] = useState<ErrorInfo | null>(null);
 
   const toastId = useRef(1);
   const toastTimer = useRef<number | null>(null);
+
+  /**
+   * Latest `refresh`, reachable from the host-message handler.
+   *
+   * The handler is registered once per bridge identity and must not re-subscribe
+   * on every render (that churn is what previously dropped the `init` reply).
+   * `refresh` itself is defined far below and changes identity whenever the
+   * selected table changes, so the handler reads it through this ref instead of
+   * capturing a stale closure or listing it as a dependency.
+   */
+  const refreshRef = useRef<() => Promise<void>>(async () => undefined);
 
   const addToast = useCallback((kind: ToastKind, message: string) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -300,6 +320,29 @@ export function useDatabaseState(): DatabaseState {
           break;
         case 'readOnly':
           setReadOnly(msg.readOnly);
+          break;
+        /**
+         * The host asks for the new-table dialog — either because the user ran
+         * the `newTableDialog` command from the toolbar/menu, or because the
+         * editor was opened from an "Add object" entry point.
+         *
+         * This used to be dropped silently: the host posted `addObject` and the
+         * handler had no matching case, so the button did nothing at all.
+         */
+        case 'addObject':
+          setShowNewTableDialog(true);
+          break;
+        /**
+         * Toolbar-driven refresh / "open SQL editor". The host has no DB state
+         * of its own; it only signals intent, and the webview re-fetches. Both
+         * were posted by the extension and previously fell through to `default`
+         * with no effect.
+         */
+        case 'refreshRequested':
+          void refreshRef.current();
+          break;
+        case 'showSql':
+          setCenterTab('sql');
           break;
         default:
           break;
@@ -453,18 +496,41 @@ export function useDatabaseState(): DatabaseState {
     (name: string) => {
       setCurrentTable(name);
       setCurrentObject({ kind: 'table', name });
-      setCenterTab('structure');
+      setCenterTab('properties');
       void refreshSchema(name);
     },
     [refreshSchema]
   );
 
+  const openSettings = useCallback(async () => {
+    try {
+      await bridge.send({ type: 'openSettings' });
+    } catch {
+      // no-op: settings is best-effort and should not block the UI
+    }
+  }, [bridge]);
+
   const selectObject = useCallback(
     (obj: ObjectInfo) => {
-      setCurrentObject({ kind: obj.type as ActiveSelection['kind'], name: obj.name });
       if (obj.type === 'table') {
         selectTable(obj.name);
+      } else if (obj.type === 'view') {
+        setCurrentObject({ kind: 'view', name: obj.name });
+        setSqlTextState(obj.sql || `-- VIEW ${obj.name}`);
+        setCenterTab('sql');
+      } else if (obj.type === 'index' || obj.type === 'trigger') {
+        setCurrentObject({ kind: obj.type, name: obj.name });
+        setSqlTextState(obj.sql || `-- ${obj.type.toUpperCase()} ${obj.name}`);
+        setCenterTab('sql');
+      } else if (obj.type === 'sequence') {
+        setCurrentObject({ kind: 'sequence', name: obj.name, seq: obj.seq });
+        setCurrentTable(null);
+        setCenterTab('properties');
+      } else if (obj.type === 'dataType') {
+        setCurrentObject({ kind: 'dataType', name: obj.name });
+        setCenterTab('properties');
       } else {
+        setCurrentObject({ kind: obj.type as ActiveSelection['kind'], name: obj.name });
         setSqlTextState(obj.sql || `-- ${obj.type.toUpperCase()} ${obj.name}`);
         setCenterTab('sql');
       }
@@ -479,6 +545,12 @@ export function useDatabaseState(): DatabaseState {
     if (currentTable) await refreshSchema(currentTable);
     hideProgress();
   }, [refreshInfo, refreshMetadata, refreshSchema, currentTable, showProgress, hideProgress]);
+
+  // Keep the host-message handler's view of `refresh` current without making the
+  // handler re-subscribe (see refreshRef's declaration).
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   const reopen = useCallback(async () => {
     if (!dbInfo) return;
@@ -808,6 +880,52 @@ export function useDatabaseState(): DatabaseState {
     [bridge, addToast, currentTable, refreshInfo, refreshMetadata, describeError]
   );
 
+  /* ---- new table ------------------------------------------------------- */
+
+  const openNewTableDialog = useCallback(() => setShowNewTableDialog(true), []);
+  const closeNewTableDialog = useCallback(() => setShowNewTableDialog(false), []);
+
+  /**
+   * Create a table from the new-table dialog.
+   *
+   * The SQL is assembled by `buildNewTablePlan` in `src/shared/ddl.ts`, which is
+   * also what decides whether a sequence is legal for the current engine. The
+   * dialog is authoritative for input, but this layer re-runs the plan so a
+   * caller cannot post LibreSQL-only DDL to a plain SQLite file by accident.
+   *
+   * Returns the created table name so the caller can select it; throws with a
+   * readable message when the plan refuses the input, which the dialog renders
+   * inline rather than as a toast (the user is still editing the form).
+   */
+  const createTable = useCallback(
+    async (options: NewTableOptions) => {
+      const engine = dbInfo?.engine ?? 'sqlite';
+      const capabilities = dbInfo?.capabilities ?? SQLITE_CAPABILITIES;
+      const plan = buildNewTablePlan(options, {
+        engine,
+        capabilities,
+        // Sequences are a Turso Database extension; the capability flag is the
+        // source of truth, so a plain SQLite or libSQL file cannot emit DDL its
+        // engine would reject.
+        sequencesSupported: capabilities.sequences === true,
+        existingNames: objects.map((o) => o.name)
+      });
+      if (!plan.ok) {
+        throw new Error(t(plan.errorKey));
+      }
+      const res = await bridge.send({ type: 'executeDdl', statements: plan.statements });
+      if (!res.ok) {
+        addToast('error', describeError(res.error));
+        return;
+      }
+      for (const key of plan.warningKeys) addToast('warning', t(key));
+      addToast('success', t('newTable.created'));
+      setShowNewTableDialog(false);
+      await Promise.all([refreshInfo(), refreshMetadata()]);
+    },
+    [bridge, dbInfo, objects, addToast, describeError, refreshInfo, refreshMetadata, t]
+  );
+
   const setSqlText = useCallback((text: string) => setSqlTextState(text), []);
   const clearSql = useCallback(() => setSqlTextState(''), []);
   const runAllSql = useCallback(() => void executeSql(sqlText), [executeSql, sqlText]);
@@ -852,8 +970,11 @@ export function useDatabaseState(): DatabaseState {
           addToast('error', describeError(res.error));
           return;
         }
+        // A dismissed save dialog is not a success and not a failure: report
+        // nothing and leave the dialog open so the user can try again.
+        if ((res.response as { type?: string }).type === 'exportCancelled') return;
         const r = res.response as { filePath: string; sizeBytes: number };
-        addToast('success', `Exported ${r.filePath}`);
+        addToast('success', t('export.done', { path: r.filePath }));
         setShowExportDialog(false);
       } finally {
         hideProgress();
@@ -997,11 +1118,16 @@ export function useDatabaseState(): DatabaseState {
     importPreviewState,
     activeImportTable,
     showExportDialog,
+    showNewTableDialog,
+    openNewTableDialog,
+    closeNewTableDialog,
+    createTable,
     exportScope,
     loadError,
     selectTable,
     selectObject,
     openStructure,
+    openSettings,
     switchTab: setCenterTab,
     refresh,
     reopen,

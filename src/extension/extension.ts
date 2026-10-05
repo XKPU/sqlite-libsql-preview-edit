@@ -16,7 +16,7 @@ import { Logger } from './logger';
  */
 export function activate(context: vscode.ExtensionContext): void {
   const state = new ExtensionState();
-  const logger = new Logger('SQLite/LibSQL Preview&Edit');
+  const logger = new Logger('SQLite/LibSQL/Turso P&E');
   context.subscriptions.push(logger);
   const provider = new DatabaseEditorProvider(context, state, logger);
   context.subscriptions.push(provider);
@@ -85,12 +85,24 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('libSqlPreviewEdit.addObject', async () => {
+    vscode.commands.registerCommand('libSqlPreviewEdit.clearCache', async () => {
+      await state.settings.update('readOnlyTables', [], vscode.ConfigurationTarget.Global);
+      await vscode.window.showInformationMessage(state.i18n.t('cmd.clearCache'));
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('libSqlPreviewEdit.newTableDialog', async () => {
       const panel = provider.activePanel();
       if (!panel) {
-        await vscode.window.showInformationMessage(state.i18n.t('cmd.addObject'));
+        await vscode.window.showInformationMessage(state.i18n.t('cmd.newTableDialog'));
         return;
       }
+      // `addObject` here is the host->webview MESSAGE type, deliberately kept
+      // distinct from the `newTableDialog` COMMAND id: command ids are
+      // user-facing surface (menu/title/keybinding), message types are the wire
+      // contract shared with the webview. Keeping the wire name stable avoids
+      // having to bump PROTOCOL_VERSION for a pure rename.
       await panel.webview.postMessage({ id: 0, type: 'addObject' });
     })
   );

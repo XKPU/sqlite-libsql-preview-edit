@@ -108,6 +108,10 @@ const DEFAULT_SETTINGS: WebviewSettings = {
   language: 'en',
   pageSize: 50,
   readOnly: false,
+  // Mirrors the host's own default: `settings.ts` reads `readOnlyTables` with an
+  // empty-array fallback, so a webview that renders before the first settings
+  // message shows the same table locks as the host.
+  readOnlyTables: [],
   confirmDestructiveActions: true,
   nullDisplay: 'NULL',
   maxCellLength: 1000,

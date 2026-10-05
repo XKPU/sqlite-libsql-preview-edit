@@ -30,6 +30,7 @@ function makeHarness(opts: { dropInitialPush: boolean }) {
     language: 'en',
     pageSize: 50,
     readOnly: false,
+    readOnlyTables: [],
     confirmDestructiveActions: true,
     nullDisplay: 'NULL',
     maxCellLength: 1000,
@@ -49,7 +50,7 @@ function makeHarness(opts: { dropInitialPush: boolean }) {
     writable: true,
     readOnly: false,
     version: '3.49.1',
-    driver: 'sql.js',
+    driver: 'libsql',
     engine: 'sqlite',
     detection: { engine: 'sqlite', libSql: false, fallback: false, evidence: [], decidedBy: 'none' },
     capabilities: {
@@ -59,6 +60,7 @@ function makeHarness(opts: { dropInitialPush: boolean }) {
       upsertReturning: false,
       embeddedReplicas: false,
       nonConstantDefaults: false,
+      sequences: false,
       onlyFunctions: []
     }
   };
@@ -160,7 +162,7 @@ describe('editor startup handshake', () => {
     assert.equal(reply.settings.readOnly, false);
     assert.equal(reply.settings.pageSize, 50);
     assert.deepEqual(reply.objects.map((o) => o.name), ['users']);
-    assert.equal(reply.info.driver, 'sql.js');
+    assert.equal(reply.info.driver, 'libsql');
   });
 
   it('replies to close with a closed response, not a meaningless pong', async () => {

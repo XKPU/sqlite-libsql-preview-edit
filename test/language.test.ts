@@ -41,6 +41,7 @@ const HOST_HANDLED = new Set([
   'init',
   'close',
   'setLanguage',
+  'openSettings',
   'log'
 ]);
 
@@ -170,8 +171,8 @@ describe('failed open does not hang on the loading placeholder', () => {
 describe('corrupt files are classified, not reported as unknown', () => {
   it('maps SQLite wording to a localized phrase', async () => {
     const fs = await import('node:fs/promises');
-    const src = await fs.readFile('src/extension/adapter/sqlJsAdapter.ts', 'utf8');
-    // The bundled engine reports exactly "file is not a database" for a
+    const src = await fs.readFile('src/extension/adapter/libSqlAdapter.ts', 'utf8');
+    // The native engine reports exactly "file is not a database" for a
     // non-database file; without this pattern the code was UNKNOWN and the UI
     // showed raw English driver text.
     assert.match(src, /lower\.includes\('not a database'\)/, 'that wording must map to DB_CORRUPT');

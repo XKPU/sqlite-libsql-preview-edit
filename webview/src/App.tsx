@@ -10,8 +10,10 @@ import { DataTable } from './components/DataTable';
 import { SqlEditor } from './components/SqlEditor';
 import { SqlResult } from './components/SqlResult';
 import { StructureView } from './components/StructureView';
-import { ExportDialog, ImportDialog } from './components/dialogs';
-import { Button, Icon, Modal, Select, Spinner, ToolbarIconButton } from './components/common';
+import { SequenceView } from './components/SequenceView';
+import { DataTypeView } from './components/DataTypeView';
+import { ExportDialog, ImportDialog, NewTableDialog } from './components/dialogs';
+import { Button, Icon, Modal, Spinner, ToolbarIconButton } from './components/common';
 
 export const App: React.FC = () => {
   const state = useDatabaseState();
@@ -27,15 +29,6 @@ export const App: React.FC = () => {
   useEffect(() => {
     setLanguage(state.language);
   }, [state.language, setLanguage]);
-
-  const handleLanguageChange = useCallback(
-    (lang: Language) => {
-      // Routes through the state hook, which owns the bridge call and its
-      // error reporting; the host persists and broadcasts `languageChanged`.
-      state.setLanguage(lang);
-    },
-    [state]
-  );
 
   const handleRefresh = useCallback(() => {
     void state.refresh();
@@ -93,55 +86,50 @@ export const App: React.FC = () => {
           {state.dbInfo ? (
             <>
               <div className="tabs">
-                <div className="tabs-filename" title={state.dbInfo.path || ''}>
-                  <Icon name={state.readOnly ? 'database-locked' : 'database'} size={14} />
-                  <span>{state.dbInfo.path ? (state.dbInfo.path.split(/[\\/]/).pop() || state.dbInfo.path) : '—'}</span>
-                </div>
+                {state.currentObject ? (
+                  <>
+                {state.currentObject && state.currentObject.kind !== 'sequence' && (
+                  <button
+                    className={'tab' + (centerTab === 'data' ? ' tab-active' : '')}
+                    onClick={() => state.switchTab('data')}
+                    disabled={state.currentObject.kind !== 'table'}
+                  >
+                    <Icon name="rows" size={12} />
+                    {t('menu.viewData')}
+                  </button>
+                )}
                 <button
-                  className={'tab' + (centerTab === 'data' ? ' tab-active' : '')}
-                  onClick={() => state.switchTab('data')}
-                  disabled={!state.currentTable}
-                >
-                  <Icon name="rows" size={12} />
-                  {t('menu.viewData')}
-                </button>
-                <button
-                  className={'tab' + (centerTab === 'structure' ? ' tab-active' : '')}
-                  onClick={() => state.switchTab('structure')}
-                  disabled={!state.currentTable}
+                  className={'tab' + (centerTab === 'properties' ? ' tab-active' : '')}
+                  onClick={() => state.switchTab('properties')}
+                  disabled={state.currentObject?.kind !== 'table' && state.currentObject?.kind !== 'sequence'}
                 >
                   <Icon name="columns" size={12} />
-                  {t('menu.viewSchema')}
+                  {t('menu.properties')}
                 </button>
-                <button className={'tab' + (centerTab === 'sql' ? ' tab-active' : '')} onClick={() => state.switchTab('sql')}>
-                  <Icon name="sql" size={12} />
-                  {t('sql.editorTitle')}
-                </button>
+                {state.currentObject && state.currentObject.kind !== 'sequence' && (
+                  <button className={'tab' + (centerTab === 'sql' ? ' tab-active' : '')} onClick={() => state.switchTab('sql')}>
+                    <Icon name="sql" size={12} />
+                    {t('sql.editorTitle')}
+                  </button>
+                )}
+                  </>
+                ) : null}
                 <div className="tabs-actions">
                   <ToolbarIconButton icon="export" onClick={() => state.startExport('table')} label={t('menu.exportTable')} />
                   <ToolbarIconButton icon="refresh" loading={state.loading} onClick={handleRefresh} label={t('cmd.refresh')} />
                   <ToolbarIconButton icon="info" onClick={handleInfo} label={t('cmd.info')} className={showInfo ? 'toolbar-active' : undefined} />
                   <div className="divider-v" />
-                  <Select
-                    value={state.language}
-                    onChange={(e) => {
-                      const next = e.target.value as Language;
-                      handleLanguageChange(next);
-                      setLanguage(next);
-                    }}
-                    aria-label={t('language')}
-                    style={{ width: 100 }}
-                  >
-                    <option value="en">{t('language.en')}</option>
-                    <option value="zh-cn">{t('language.zh-cn')}</option>
-                  </Select>
+                  <ToolbarIconButton icon="settings" onClick={() => void state.openSettings()} label={t('cmd.openSettings')} />
                 </div>
               </div>
 
               <div className="tab-content">
-                {centerTab === 'data' && <DataTable state={state} />}
-                {centerTab === 'structure' && <StructureView state={state} />}
-                {centerTab === 'sql' && (
+                {centerTab === 'data' && state.currentObject?.kind !== 'sequence' && (
+                  state.currentObject?.kind === 'dataType' ? <DataTypeView state={state} /> :
+                  <DataTable state={state} />
+                )}
+                {centerTab === 'properties' && (state.currentObject?.kind === 'sequence' ? <SequenceView state={state} /> : <StructureView state={state} />)}
+                {centerTab === 'sql' && state.currentObject?.kind !== 'sequence' && (
                   <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                     <SqlEditor state={state} />
                     <SqlResult state={state} />
@@ -200,6 +188,11 @@ export const App: React.FC = () => {
         state={state}
         open={!!state.activeImportTable}
         onClose={() => state.cancelImport()}
+      />
+      <NewTableDialog
+        state={state}
+        open={state.showNewTableDialog}
+        onClose={() => state.closeNewTableDialog()}
       />
     </div>
   );

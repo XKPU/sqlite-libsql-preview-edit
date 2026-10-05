@@ -3,7 +3,9 @@
 
 import React, { useEffect, useState } from 'react';
 import type { ExportFormat, ImportFieldMapping, SqlValue } from '../../../src/shared/protocol';
-import { bytesToHex, isNull } from '../../../src/shared/protocol';
+import { bytesToHex, isNull, SQLITE_CAPABILITIES } from '../../../src/shared/protocol';
+import type { NewTableField, NewTableOptions } from '../../../src/shared/ddl';
+import { buildNewTablePlan } from '../../../src/shared/ddl';
 import { useI18n } from '../i18n';
 import type { DatabaseState } from '../hooks/useDatabaseState';
 import {
@@ -352,3 +354,240 @@ function formatImportValue(v: SqlValue): string {
   if (v instanceof Uint8Array) return bytesToHex(v);
   return String(v);
 }
+
+/* ------------------------------------------------------------------------ */
+/* NewTableDialog                                                           */
+/* ------------------------------------------------------------------------ */
+
+export interface NewTableDialogProps {
+  state: DatabaseState;
+  open: boolean;
+  onClose: () => void;
+}
+
+/** Raw text form state; numbers stay strings until submit so typing is free. */
+interface NewTableForm {
+  tableName: string;
+  idColumn: string;
+  autoIncrement: boolean;
+  sequenceName: string;
+  startValue: string;
+  incrementBy: string;
+  minValue: string;
+  maxValue: string;
+}
+
+const EMPTY_FORM: NewTableForm = {
+  tableName: '',
+  idColumn: 'id',
+  autoIncrement: true,
+  sequenceName: '',
+  startValue: '',
+  incrementBy: '',
+  minValue: '',
+  maxValue: ''
+};
+
+/** Parse an optional numeric field; '' means "unset", junk becomes NaN. */
+function optionalNumber(text: string): number | undefined {
+  const trimmed = text.trim();
+  if (trimmed === '') return undefined;
+  return Number(trimmed);
+}
+
+/**
+ * Create a new table.
+ *
+ * The SQL is not assembled here: `buildNewTablePlan` owns validation, capability
+ * gating and generation, and this dialog REUSES that decision rather than
+ * duplicating it — the confirm button is enabled only when the same function the
+ * hook will call reports `ok`. That keeps the preview honest: what the user
+ * reads in the preview is exactly what gets executed.
+ *
+ * Sequences are disabled rather than hidden. `CREATE SEQUENCE` is a Turso
+ * Database extension, so no engine this extension currently drives can execute
+ * it; the fields stay visible but inert so the capability is discoverable and
+ * the UI needs no restructuring when such an engine is added.
+ */
+export const NewTableDialog: React.FC<NewTableDialogProps> = ({ state, open, onClose }) => {
+  const { t } = useI18n();
+  const [form, setForm] = useState<NewTableForm>(EMPTY_FORM);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setForm(EMPTY_FORM);
+      setSubmitError(null);
+      setSubmitting(false);
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const patch = (p: Partial<NewTableForm>) => setForm((f) => ({ ...f, ...p }));
+
+  const options: NewTableOptions = {
+    tableName: form.tableName,
+    idColumn: form.idColumn,
+    autoIncrement: form.autoIncrement,
+    // A sequence is only ever sent when the user actually named one; the pure
+    // layer treats "autoIncrement && sequenceName defined" as the request.
+    sequenceName: form.autoIncrement && form.sequenceName.trim() !== '' ? form.sequenceName : undefined,
+    startValue: optionalNumber(form.startValue),
+    incrementBy: optionalNumber(form.incrementBy),
+    minValue: optionalNumber(form.minValue),
+    maxValue: optionalNumber(form.maxValue)
+  };
+
+  const capabilities = state.dbInfo?.capabilities ?? SQLITE_CAPABILITIES;
+  // Sequences are a Turso Database extension. The flag comes from the reported
+  // capabilities rather than the engine name, because libSQL and stock SQLite
+  // are "SQLite family" too but cannot parse `CREATE SEQUENCE`.
+  const sequencesSupported = capabilities.sequences === true;
+
+  const plan = buildNewTablePlan(options, {
+    engine: state.dbInfo?.engine ?? 'sqlite',
+    capabilities,
+    sequencesSupported,
+    existingNames: state.objects.map((o) => o.name)
+  });
+
+  const errorKey = plan.ok ? null : plan.errorKey;
+  const errorField = plan.ok ? null : plan.field;
+  const preview = plan.ok ? plan.statements.join('\n') : '';
+
+  /**
+   * A field-level message, shown under the input it belongs to.
+   *
+   * Deliberately inline: the user is mid-edit, so a toast would be both easy to
+   * miss and detached from the field that needs attention.
+   */
+  const fieldError = (field: NewTableField) =>
+    errorField === field && errorKey ? <span className="field-help error-text">{t(errorKey)}</span> : null;
+
+  // Errors that belong to no rendered input still have to be visible.
+  const inlineField = errorField !== null && (errorField === 'tableName' || errorField === 'idColumn'
+    || errorField === 'startValue' || errorField === 'incrementBy'
+    || errorField === 'minValue' || errorField === 'maxValue');
+  const generalError = errorKey && !inlineField ? t(errorKey) : null;
+
+  const submit = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      // On success the hook closes this dialog, so there is nothing to do here.
+      await state.createTable(options);
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      className="modal-lg"
+      title={t('newTable.title')}
+      icon="plus"
+      onClose={onClose}
+      footer={
+        <ModalActions
+          onCancel={onClose}
+          onConfirm={() => void submit()}
+          cancelLabel={t('cancel')}
+          confirmLabel={t('newTable.create')}
+          confirmDisabled={!plan.ok || submitting}
+          confirmLoading={submitting}
+        />
+      }
+    >
+      <DialogError error={submitError} />
+
+      <div className="field-row">
+        <Field label={t('newTable.tableName')}>
+          <Input
+            value={form.tableName}
+            autoFocus
+            onChange={(e) => patch({ tableName: e.target.value })}
+            placeholder={t('newTable.tableNamePlaceholder')}
+          />
+          {fieldError('tableName')}
+        </Field>
+        <Field label={t('newTable.idColumn')}>
+          <Input
+            value={form.idColumn}
+            onChange={(e) => patch({ idColumn: e.target.value })}
+            placeholder={t('newTable.idColumnPlaceholder')}
+          />
+          {fieldError('idColumn')}
+        </Field>
+      </div>
+
+      <CheckboxLine
+        checked={form.autoIncrement}
+        onChange={(v) => patch({ autoIncrement: v })}
+        label={t('newTable.autoIncrement')}
+      />
+
+      {form.autoIncrement && (
+        <div className="field-spaced">
+          <Field label={t('newTable.sequence')} help={t('newTable.sequenceUnavailable')}>
+            <Input
+              value={form.sequenceName}
+              disabled={!sequencesSupported}
+              onChange={(e) => patch({ sequenceName: e.target.value })}
+              placeholder={t('newTable.sequencePlaceholder')}
+            />
+          </Field>
+          <div className="field-row">
+            <Field label={t('newTable.startValue')}>
+              <Input
+                value={form.startValue}
+                disabled={!sequencesSupported}
+                onChange={(e) => patch({ startValue: e.target.value })}
+                placeholder={t('newTable.defaultHint')}
+              />
+              {fieldError('startValue')}
+            </Field>
+            <Field label={t('newTable.incrementBy')}>
+              <Input
+                value={form.incrementBy}
+                disabled={!sequencesSupported}
+                onChange={(e) => patch({ incrementBy: e.target.value })}
+                placeholder={t('newTable.defaultHint')}
+              />
+              {fieldError('incrementBy')}
+            </Field>
+          </div>
+          <div className="field-row">
+            <Field label={t('newTable.minValue')}>
+              <Input
+                value={form.minValue}
+                disabled={!sequencesSupported}
+                onChange={(e) => patch({ minValue: e.target.value })}
+                placeholder={t('newTable.defaultHint')}
+              />
+              {fieldError('minValue')}
+            </Field>
+            <Field label={t('newTable.maxValue')}>
+              <Input
+                value={form.maxValue}
+                disabled={!sequencesSupported}
+                onChange={(e) => patch({ maxValue: e.target.value })}
+                placeholder={t('newTable.defaultHint')}
+              />
+              {fieldError('maxValue')}
+            </Field>
+          </div>
+        </div>
+      )}
+
+      {generalError && <div className="error-text field-spaced">{generalError}</div>}
+
+      <Field label={t('newTable.preview')} className="field-spaced">
+        <Textarea value={preview} readOnly rows={4} />
+      </Field>
+    </Modal>
+  );
+};

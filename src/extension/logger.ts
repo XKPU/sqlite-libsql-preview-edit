@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 
 /**
  * Logger backed by a real VS Code Output channel, shown under the extension's
- * own name in the Output panel ("SQLite/LibSQL Preview&Edit").
+ * own name in the Output panel ("SQLite/LibSQL/Turso P&E").
  *
  * The editor's load path spans the extension host and a sandboxed webview, so
  * when something stalls there is otherwise nothing to look at. Every message

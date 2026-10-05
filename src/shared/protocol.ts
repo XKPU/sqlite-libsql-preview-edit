@@ -26,7 +26,7 @@
  */
 export type SqlValue = string | number | boolean | null | Uint8Array;
 
-export type ObjectType = 'table' | 'view' | 'index' | 'trigger' | 'system';
+export type ObjectType = 'table' | 'view' | 'index' | 'trigger' | 'sequence' | 'dataType' | 'system';
 
 export type ExportFormat = 'csv' | 'json' | 'sql';
 export type ImportFormat = 'csv' | 'json';
@@ -44,6 +44,16 @@ export interface ObjectInfo {
   declaredType?: string;
   /** True when the object is user-defined and was created with AS OF. */
   readOnly?: boolean;
+  /** Current sequence counter from sqlite_sequence; set only for type==='sequence'. */
+  seq?: number;
+  /** Start value from CREATE SEQUENCE, when available. */
+  startValue?: number;
+  /** Increment value from CREATE SEQUENCE, when available. */
+  incrementBy?: number;
+  /** Minimum value from CREATE SEQUENCE, when available. */
+  minValue?: number;
+  /** Maximum value from CREATE SEQUENCE, when available. */
+  maxValue?: number;
 }
 
 export interface ColumnInfo {
@@ -122,7 +132,7 @@ export interface DatabaseInfo {
   readOnly: boolean;
   version: string;
   /**
-   * Name of the driver actually running the queries (e.g. `sql.js`). Distinct
+   * Name of the driver actually running the queries (e.g. `libsql`). Distinct
    * from `engine`: the driver is the implementation, the engine is the dialect
    * the file calls for.
    */
@@ -140,11 +150,16 @@ export interface DatabaseInfo {
 /* ------------------------------------------------------------------------ */
 
 /**
- * The SQLite family dialect in use. SQLite is always the baseline; LibSQL is
- * enabled only when positive evidence is found, so a plain SQLite file can
- * never be mislabelled.
+ * The SQLite-family dialect in use. SQLite is always the baseline; a richer
+ * dialect is reported only when positive evidence is found, so a plain SQLite
+ * file can never be mislabelled.
+ *
+ * All three share the same on-disk `SQLite format 3` container, which is what
+ * makes one editor able to open any of them. They differ in SQL surface:
+ * `turso` adds `CREATE SEQUENCE` / `nextval()`, which neither `libsql` nor
+ * `sqlite` implements.
  */
-export type DbEngine = 'sqlite' | 'libsql';
+export type DbEngine = 'sqlite' | 'libsql' | 'turso';
 
 /** Where a piece of LibSQL evidence came from. */
 export type LibSqlEvidenceKind =
@@ -171,11 +186,11 @@ export interface LibSqlEvidence {
 }
 
 /**
- * LibSQL-only capabilities, switched on the moment detection succeeds. All
- * flags are false in the SQLite baseline.
+ * Engine capabilities, switched on the moment detection succeeds. All flags are
+ * false in the SQLite baseline.
  */
 export interface LibSqlCapabilities {
-  /** `CREATE TABLE ... STRICT` with LibSQL's extended type set. */
+  /** `CREATE TABLE ... STRICT` with the extended type set. */
   strictTables: boolean;
   /** `ALTER TABLE ... ALTER COLUMN` / `DROP COLUMN`. */
   alterColumn: boolean;
@@ -187,7 +202,16 @@ export interface LibSqlCapabilities {
   embeddedReplicas: boolean;
   /** `ALTER TABLE ... ADD COLUMN` with a non-constant default. */
   nonConstantDefaults: boolean;
-  /** Functions the SQL editor may offer only when LibSQL is active. */
+  /**
+   * `CREATE SEQUENCE` and `nextval()`, so a primary key can take its default
+   * from a sequence instead of the rowid counter.
+   *
+   * This is a **Turso Database** extension. Stock SQLite and libSQL do not
+   * implement it, so it must stay false for those engines — never infer it from
+   * `engine === 'libsql'`.
+   */
+  sequences: boolean;
+  /** Functions the SQL editor may offer only when a richer dialect is active. */
   onlyFunctions: string[];
 }
 
@@ -196,8 +220,10 @@ export interface LibSqlDetection {
   /** Convenience mirror of `engine === 'libsql'`. */
   libSql: boolean;
   /**
-   * True when a LibSQL file is being served by the bundled sql.js engine,
-   * which is byte-compatible but cannot execute LibSQL-only statements.
+   * Always `false`: the native libsql engine is the only driver, so a detected
+   * LibSQL file is never served by a less capable fallback engine. Kept as a
+   * field because the webview still reads it and a future fallback engine would
+   * need somewhere to report that.
    */
   fallback: boolean;
   /** Evidence considered, strongest first. Empty when nothing matched. */
@@ -214,10 +240,17 @@ export const SQLITE_CAPABILITIES: LibSqlCapabilities = {
   upsertReturning: false,
   embeddedReplicas: false,
   nonConstantDefaults: false,
+  sequences: false,
   onlyFunctions: []
 };
 
-/** Capabilities enabled once a file is confirmed to be LibSQL. */
+/**
+ * Capabilities of the libSQL dialect (`@libsql/client`, the C fork of SQLite).
+ *
+ * Retained as the reference point for what libSQL alone offers. Note
+ * `sequences: false`: `CREATE SEQUENCE` is NOT part of libSQL — it belongs to
+ * Turso Database (see `TURSO_CAPABILITIES`).
+ */
 export const LIBSQL_CAPABILITIES: LibSqlCapabilities = {
   strictTables: true,
   alterColumn: true,
@@ -225,6 +258,7 @@ export const LIBSQL_CAPABILITIES: LibSqlCapabilities = {
   upsertReturning: true,
   embeddedReplicas: true,
   nonConstantDefaults: true,
+  sequences: false,
   onlyFunctions: [
     'vector_distance_cos',
     'vector_distance_l2',
@@ -232,6 +266,35 @@ export const LIBSQL_CAPABILITIES: LibSqlCapabilities = {
     'vector_extract',
     'vector_full_scan',
     'libsql_wal_frame_count'
+  ]
+};
+
+/**
+ * Capabilities of Turso Database (`@tursodatabase/database`), the engine this
+ * extension ships.
+ *
+ * It is a strict superset of libSQL for everything the editor exposes: the C-fork
+ * feature set all holds, and `CREATE SEQUENCE` / `nextval()` are additionally
+ * available. Every flag here was verified by executing the statement against the
+ * live engine, not inferred from documentation.
+ *
+ * `embeddedReplicas` is false: this extension opens LOCAL FILES only and wires
+ * up no remote or replica transport.
+ */
+export const TURSO_CAPABILITIES: LibSqlCapabilities = {
+  strictTables: true,
+  alterColumn: true,
+  vectorSearch: true,
+  upsertReturning: true,
+  embeddedReplicas: false,
+  nonConstantDefaults: true,
+  sequences: true,
+  onlyFunctions: [
+    'vector_distance_cos',
+    'vector_distance_l2',
+    'vector_top_k',
+    'vector_extract',
+    'vector_full_scan'
   ]
 };
 
@@ -245,6 +308,7 @@ export interface WebviewSettings {
   language: Language;
   pageSize: number;
   readOnly: boolean;
+  readOnlyTables: string[];
   confirmDestructiveActions: boolean;
   nullDisplay: string;
   maxCellLength: number;
@@ -321,7 +385,7 @@ export interface ImportOptions {
  *
  * Bump this whenever a message type is added or its shape changes.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export interface HostRequestBase {
   /** Monotonic id so responses can be matched. */
@@ -437,6 +501,15 @@ export type HostRequest =
     })
   | (HostRequestBase & {
       /**
+       * Open the extension's settings page in VS Code.
+       *
+       * The webview cannot call `workbench.action.openSettings` directly, so it
+       * asks the extension host to launch the command on its behalf.
+       */
+      type: 'openSettings';
+    })
+  | (HostRequestBase & {
+      /**
        * Forward a webview-side diagnostic to the host's Output channel.
        *
        * The webview runs sandboxed with no console access from the extension
@@ -491,6 +564,12 @@ export type HostResponse =
   | { id: number; type: 'saved'; changes: number }
   | { id: number; type: 'languageChanged'; language: Language; settings: WebviewSettings }
   | { id: number; type: 'exported'; filePath: string; sizeBytes: number; format: ExportFormat }
+  /**
+   * The user dismissed the save dialog, so nothing was written. Distinct from an
+   * `error`: reporting a cancellation as a failure would train users to ignore
+   * real export errors.
+   */
+  | { id: number; type: 'exportCancelled'; format: ExportFormat }
   | { id: number; type: 'importPreview'; mappings: ImportFieldMapping[]; previewRows: SqlValue[][]; headers: string[] }
   | { id: number; type: 'imported'; rows: number; skipped: number; tableName: string }
   | { id: number; type: 'objectDeleted'; name: string; objectType: ObjectType }

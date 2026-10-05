@@ -5,20 +5,31 @@ import React, { useMemo, useRef, useState } from 'react';
 import type { ObjectInfo } from '../../../src/shared/protocol';
 import { useI18n } from '../i18n';
 import type { DatabaseState } from '../hooks/useDatabaseState';
-import { Badge, ContextMenu, Icon, Input, type ContextMenuItem } from './common';
+import { Badge, ContextMenu, Icon, Input, ToolbarIconButton, type ContextMenuItem } from './common';
 
 export interface ObjectTreeProps {
   state: DatabaseState;
 }
 
 interface GroupItem {
-  kind: 'table' | 'view' | 'index' | 'trigger';
-  icon: 'table' | 'view' | 'index' | 'trigger';
-  labelKey: 'tree.tables' | 'tree.views' | 'tree.indexes' | 'tree.triggers';
+  kind: 'table' | 'view' | 'index' | 'trigger' | 'sequence' | 'dataType';
+  icon: 'table' | 'view' | 'index' | 'trigger' | 'sequence' | 'dataType';
+  labelKey: 'tree.tables' | 'tree.views' | 'tree.indexes' | 'tree.triggers' | 'tree.sequences' | 'tree.dataTypes';
 }
 
+const DATA_TYPE_ITEMS: ObjectInfo[] = [
+  { name: 'INTEGER', type: 'dataType' },
+  { name: 'TEXT', type: 'dataType' },
+  { name: 'REAL', type: 'dataType' },
+  { name: 'BLOB', type: 'dataType' },
+  { name: 'NUMERIC', type: 'dataType' },
+  { name: 'DATETIME', type: 'dataType' },
+  { name: 'BOOLEAN', type: 'dataType' }
+];
 const GROUPS: GroupItem[] = [
   { kind: 'table', icon: 'table', labelKey: 'tree.tables' },
+  { kind: 'sequence', icon: 'sequence', labelKey: 'tree.sequences' },
+  { kind: 'dataType', icon: 'dataType', labelKey: 'tree.dataTypes' },
   { kind: 'view', icon: 'view', labelKey: 'tree.views' },
   { kind: 'index', icon: 'index', labelKey: 'tree.indexes' },
   { kind: 'trigger', icon: 'trigger', labelKey: 'tree.triggers' }
@@ -27,7 +38,7 @@ const GROUPS: GroupItem[] = [
 export const ObjectTree: React.FC<ObjectTreeProps> = ({ state }) => {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(['view', 'index', 'trigger']));
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(['sequence', 'dataType', 'view', 'index', 'trigger']));
   const [menu, setMenu] = useState<{ x: number; y: number; obj: ObjectInfo } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -40,13 +51,31 @@ export const ObjectTree: React.FC<ObjectTreeProps> = ({ state }) => {
       table: [],
       view: [],
       index: [],
-      trigger: []
+      trigger: [],
+      sequence: [],
+      dataType: []
     };
     for (const o of filtered) {
-      if (o.type === 'table') out.table.push(o);
-      else if (o.type === 'view') out.view.push(o);
-      else if (o.type === 'index') out.index.push(o);
-      else if (o.type === 'trigger') out.trigger.push(o);
+      if (o.type === 'sequence') {
+        out.sequence.push(o);
+      } else if (o.type === 'view') {
+        out.view.push(o);
+      } else if (o.type === 'index') {
+        out.index.push(o);
+      } else if (o.type === 'trigger') {
+        out.trigger.push(o);
+      } else if (o.type === 'dataType') {
+        out.dataType.push(o);
+      } else if (o.type === 'table') {
+        if (o.name !== 'sqlite_sequence') out.table.push(o);
+      }
+    }
+    if (q) {
+      for (const item of DATA_TYPE_ITEMS) {
+        if (item.name.toLowerCase().includes(q)) out.dataType.push(item);
+      }
+    } else {
+      for (const item of DATA_TYPE_ITEMS) out.dataType.push(item);
     }
     return out;
   }, [objects, query]);
@@ -122,18 +151,21 @@ export const ObjectTree: React.FC<ObjectTreeProps> = ({ state }) => {
     return items;
   };
 
-  const activeName = currentObject?.name;
+  const activeKey = currentObject ? `${currentObject.kind}:${currentObject.name}` : undefined;
 
   return (
     <aside className="object-tree" ref={containerRef}>
       <div className="tree-header">
-        <Input
-          icon="search"
-          placeholder={t('tree.search')}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          style={{ width: '100%' }}
-        />
+        <div className="tree-header-row">
+          <Input
+            icon="search"
+            placeholder={t('tree.search')}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <ToolbarIconButton icon="plus" label={t('cmd.newTableDialog')} onClick={() => state.openNewTableDialog()} />
+        </div>
       </div>
       <div className="tree-groups">
         {GROUPS.map((g) => {
@@ -158,13 +190,16 @@ export const ObjectTree: React.FC<ObjectTreeProps> = ({ state }) => {
                   {list.map((obj) => (
                     <div
                       key={obj.type + ':' + obj.name}
-                      className={'tree-item' + (activeName === obj.name ? ' tree-item-active' : '')}
+                      className={'tree-item' + (activeKey === obj.type + ':' + obj.name ? ' tree-item-active' : '')}
                       onClick={() => handleItemClick(obj)}
                       onContextMenu={(e) => handleContextMenu(e, obj)}
                       title={obj.name}
                     >
                       <Icon name={g.icon} size={12} />
                       <span className="tree-item-name">{obj.name}</span>
+                      {obj.type === 'sequence' && typeof obj.seq === 'number' && (
+                        <Badge variant="pk">{obj.seq}</Badge>
+                      )}
                       {obj.type === 'table' && obj.sql && (obj.sql.toUpperCase().includes('WITHOUT ROWID')) && (
                         <Badge variant="default">WR</Badge>
                       )}

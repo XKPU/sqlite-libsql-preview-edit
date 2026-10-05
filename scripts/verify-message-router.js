@@ -94,8 +94,8 @@ function makeProvider() {
     dispose: () => undefined
   };
   const adapter = {
-    open: async () => ({ driver: 'sqljs', engine: 'sqlite', version: '3.44.0', sizeBytes: 4096, writable: true }),
-    getInfo: async () => ({ driver: 'sqljs', engine: 'sqlite', version: '3.44.0', sizeBytes: 4096, writable: true }),
+    open: async () => ({ driver: 'libsql', engine: 'sqlite', version: '3.44.0', sizeBytes: 4096, writable: true }),
+    getInfo: async () => ({ driver: 'libsql', engine: 'sqlite', version: '3.44.0', sizeBytes: 4096, writable: true }),
     getObjects: async () => [],
     close: async () => undefined
   };

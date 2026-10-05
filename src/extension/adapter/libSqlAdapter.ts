@@ -4,7 +4,6 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { pathToFileURL } from 'url';
 import {
   bytesToHex,
   ColumnInfo,
@@ -14,14 +13,13 @@ import {
   ExportFormat,
   ImportFieldMapping,
   ImportFormat,
-  isNull,
   quoteIdent,
   quoteLiteral,
   QueryResult,
   resolveLibSqlDetection,
   RowEdit,
   SqlValue,
-  LIBSQL_CAPABILITIES,
+  TURSO_CAPABILITIES,
   LibSqlCapabilities,
   LibSqlDetection,
   ObjectInfo,
@@ -30,33 +28,49 @@ import {
 import { DatabaseAdapter } from './adapter';
 import {
   convertJsonValue,
-  escapeCsv,
   inferType,
   inferTypeFromColumn,
   isErrorInfo,
   normalizeValue,
   parseCsv,
-  rowsToCsv,
-  csvStringify
+  rowsToCsv
 } from './common';
 
 /* ------------------------------------------------------------------------ */
-/* LibSQL adapter using @libsql/client (native libsql + hRana remote)       */
+/* Local-file adapter backed by @tursodatabase/database (Turso Database)     */
 /* ------------------------------------------------------------------------ */
 
 /**
- * `@libsql/client` is the canonical client for LibSQL. It handles both local
- * files (through the native `libsql` binding) and remote databases (through
- * `@libsql/hrana-client`). Because it is a required dependency, the module is
- * always available; the adapter simply creates a client and runs SQL.
+ * `@tursodatabase/database` is the JavaScript binding for **Turso Database**,
+ * the Rust rewrite of SQLite. It is a LOCAL-FILE engine: it opens an on-disk
+ * database directly, and it writes the same `SQLite format 3` file format, so
+ * files remain interchangeable with stock SQLite and libSQL.
  *
- * Local-file behaviour differs from sql.js in two key ways:
- *   1. writes go straight to disk — no `export()` / `persist()` step;
- *   2. LibSQL-only statements (STRICT tables, ALTER COLUMN, vector_search,
- *      INSERT … ON CONFLICT DO UPDATE … RETURNING) execute natively.
+ * Why this engine and not the others:
+ *
+ *   - `@libsql/client-wasm` cannot open a file at all. Measured under VS Code's
+ *     own runtime, every absolute path fails with SQLITE_CANTOPEN, and where a
+ *     relative path is accepted it silently becomes an IN-MEMORY database: no
+ *     bytes reach the disk and a second process cannot see the rows, so edits
+ *     would be lost. Its payload is built without the Node filesystem VFS.
+ *
+ *   - `@libsql/client` (libSQL, the C fork of SQLite) works and writes real
+ *     files, but implements NEITHER `CREATE SEQUENCE` NOR `nextval()`.
+ *
+ *   - Turso Database is the only one of the three that implements the full set:
+ *     `CREATE SEQUENCE`, `nextval()`, STRICT tables, ALTER COLUMN,
+ *     non-constant defaults, the `vector_*` functions and upsert-RETURNING —
+ *     and it still reads files written by the other two. That is why sequence
+ *     DDL, which used to be gated off as unreachable, is now live.
+ *
+ * The dependency is native (not WASM) and ships a prebuilt binary per platform;
+ * see the CI workflow for the supported target list. `require()` works from the
+ * CommonJS extension host, so no asynchronous loading step is needed.
+ *
+ * Writes go straight to disk — there is no `export()` / `persist()` step.
  */
 
-/* ---- local type declarations (avoid ESM->CJS import-type conflict) ----- */
+/* ---- local type declarations ------------------------------------------- */
 
 type InArgs = Record<string, unknown> | unknown[];
 
@@ -78,35 +92,242 @@ interface TxObject {
   rollback(): Promise<void>;
 }
 
+/**
+ * The call shape the rest of this adapter is written against.
+ *
+ * It is deliberately the libSQL-style `execute({sql, args})` /
+ * `transaction('write')` pair rather than Turso's native API, so the ~800 lines
+ * of query, edit and export logic below stay engine-independent.
+ * `TursoConnection` and `TursoTransaction` translate between the two.
+ */
 interface LibSqlConnection {
   execute(query: InStatement): Promise<ResultSet>;
   transaction(mode: 'write' | 'read' | 'deferred'): Promise<TxObject>;
   close(): void;
 }
 
-type LibSqlClientFactory = {
-  createClient(opts: { url: string; authToken?: string }): LibSqlConnection;
-};
+/* ---- Turso native surface (only what this adapter touches) ------------- */
 
-let clientFactory: LibSqlClientFactory | null = null;
-
-function getClientFactory(): LibSqlClientFactory {
-  if (!clientFactory) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    clientFactory = require('@libsql/client') as LibSqlClientFactory;
-  }
-  return clientFactory;
+interface TursoResultSet {
+  columns: string[];
+  rows: Array<Record<string, unknown> | unknown[]>;
+  rowsAffected: number;
+  lastInsertRowid?: number;
 }
 
-/** Convert an OS file path to a LibSQL URL, preserving drive letters and spaces. */
-export function libSqlFileUrl(filePath: string): string {
-  return pathToFileURL(filePath).toString();
+interface TursoStatement {
+  sql: string;
+  args?: unknown[] | Record<string, unknown>;
+}
+
+interface TursoNativeDatabase {
+  batch(
+    statements: TursoStatement[],
+    options?: { mode?: 'write' | 'read' | 'deferred' | 'immediate' | 'exclusive' }
+  ): Promise<TursoResultSet[]>;
+  /**
+   * Runs a script that may hold several statements. Used for explicit
+   * `BEGIN` / `COMMIT` / `ROLLBACK`, and to strip leading comments.
+   */
+  exec(sql: string): Promise<void>;
+  close(): void | Promise<void>;
+}
+
+type TursoConnect = (path: string) => Promise<TursoNativeDatabase>;
+
+let tursoModule: { connect: TursoConnect } | null = null;
+
+function getTurso(): { connect: TursoConnect } {
+  if (!tursoModule) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    tursoModule = require('@tursodatabase/database') as { connect: TursoConnect };
+  }
+  return tursoModule;
+}
+
+/* ---- adapters between the two call shapes ------------------------------ */
+
+/**
+ * True for names the engine reserves for itself, which the object tree and the
+ * schema editors must not present as user objects.
+ *
+ * Two prefixes matter:
+ *   - `sqlite_`           — the SQLite baseline (`sqlite_sequence`, `sqlite_master`, …).
+ *   - `__turso_internal_` — Turso Database's own bookkeeping. Creating a table with
+ *                           AUTOINCREMENT or a sequence default makes the engine
+ *                           materialise helpers such as
+ *                           `__turso_internal_seq_<name>`; without this they leak
+ *                           into the UI as ordinary tables the user never created.
+ */
+function isInternalObject(name: string): boolean {
+  return name.startsWith('sqlite_') || name.startsWith('__turso_internal_');
+}
+
+/**
+ * Turso returns rows positionally when a statement has no column names to bind
+ * (for example `SELECT count(*)` with no alias in some paths). This adapter
+ * reads rows by column NAME everywhere, so any positional row is zipped against
+ * `columns` before it is handed on.
+ */
+function toNamedRow(row: Record<string, unknown> | unknown[], columns: string[]): Record<string, unknown> {
+  if (!Array.isArray(row)) return row;
+  const out: Record<string, unknown> = {};
+  for (let i = 0; i < columns.length; i++) {
+    const name = columns[i];
+    if (name !== undefined) out[name] = row[i];
+  }
+  return out;
+}
+
+/**
+ * Serializes async work so only one task runs at a time, in arrival order.
+ *
+ * Needed because a database connection can host only one transaction at a time.
+ * The webview posts messages without waiting for answers (`onDidReceiveMessage`
+ * fires and forgets), so two quick actions — editing two cells, or creating a
+ * table while a previous write is still in flight — really do reach the adapter
+ * concurrently. Measured: the second one failed with "cannot start a transaction
+ * within a transaction", and its work was lost.
+ */
+class Mutex {
+  private tail: Promise<unknown> = Promise.resolve();
+
+  /** Runs `task` after every previously queued task has settled. */
+  run<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(task, task);
+    // Keep the chain alive regardless of whether the task resolves or rejects,
+    // so one failure cannot stall every later operation.
+    this.tail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+}
+
+/**
+ * Buffers statements and replays them inside one explicit BEGIN/COMMIT block.
+ *
+ * This adapter expects a handle with explicit `commit()` / `rollback()`, while
+ * Turso's *documented* transaction API is callback-scoped.
+ *
+ * Two patterns were tried and BOTH are wrong here:
+ *
+ *   1. `transactionAsync(fn)` — it holds the connection lock for the whole
+ *      callback, so the obvious shim (hand out the handle, let `commit()`
+ *      release the callback) deadlocks: statements issued while waiting for
+ *      commit block on the lock the transaction itself holds.
+ *
+ *   2. Simply wrapping the batch in `transactionAsync` — measured to DISCARD
+ *      the work silently. `CREATE TABLE` and `INSERT` inside the callback both
+ *      reported success and left the database unchanged. This is an upstream
+ *      defect in the 0.8.1 engine, not a usage error, and it fails OPEN (no
+ *      exception), which makes it dangerous to rely on.
+ *
+ * What does work, and is used below, is issuing `BEGIN` / statements / `COMMIT`
+ * explicitly, verified to persist. Statements are buffered rather than executed
+ * on `execute()` so the whole set lands in one atomic transaction — a
+ * transaction that is never committed has no effect at all, and a failure
+ * anywhere rolls the entire set back.
+ *
+ * `commit()` holds the connection's mutex for its whole BEGIN…COMMIT block, so
+ * concurrent transactions queue instead of nesting.
+ */
+class TursoTransaction implements TxObject {
+  private readonly queued: TursoStatement[] = [];
+  private state: 'open' | 'finished' = 'open';
+
+  constructor(
+    private readonly db: TursoNativeDatabase,
+    private readonly mutex: Mutex
+  ) {}
+
+  async execute(query: InStatement): Promise<ResultSet> {
+    if (this.state !== 'open') {
+      throw new Error('cannot use a finished transaction');
+    }
+    this.queued.push({ sql: query.sql, args: query.args });
+    // Returned before the real execution, so the affected-row counts are not
+    // known yet. Callers that need the new rowid re-read it with
+    // `last_insert_rowid()` after commit, which is what the adapter does.
+    return { columns: [], rows: [], rowsAffected: 0, lastInsertRowid: 0 };
+  }
+
+  async commit(): Promise<void> {
+    if (this.state !== 'open') return undefined;
+    this.state = 'finished';
+    if (this.queued.length === 0) return undefined;
+    const batch = this.queued.slice();
+    this.queued.length = 0;
+
+    // The whole BEGIN…COMMIT block is one critical section: a connection can
+    // only host a single transaction, so a concurrent commit would otherwise
+    // fail with "cannot start a transaction within a transaction".
+    await this.mutex.run(async () => {
+      await this.db.exec('BEGIN');
+      try {
+        // One round trip for the whole set, in the order it was recorded.
+        await this.db.batch(batch);
+        await this.db.exec('COMMIT');
+      } catch (e) {
+        // Leave the connection usable: a failed statement must not strand an
+        // open transaction that would swallow every later write.
+        try {
+          await this.db.exec('ROLLBACK');
+        } catch {
+          /* already torn down by the engine */
+        }
+        throw e;
+      }
+    });
+    return undefined;
+  }
+
+  async rollback(): Promise<void> {
+    // Nothing has been sent yet, so discarding the buffer IS the rollback.
+    this.state = 'finished';
+    this.queued.length = 0;
+    return undefined;
+  }
+}
+
+function normalizeResult(result: TursoResultSet | undefined): ResultSet {
+  const columns = result?.columns ?? [];
+  const rows = (result?.rows ?? []).map((r) => toNamedRow(r, columns));
+  return {
+    columns,
+    rows,
+    rowsAffected: result?.rowsAffected ?? 0,
+    lastInsertRowid: result?.lastInsertRowid ?? 0
+  };
+}
+
+class TursoConnection implements LibSqlConnection {
+  /** One per connection: the connection hosts one transaction at a time. */
+  private readonly mutex = new Mutex();
+
+  constructor(private readonly db: TursoNativeDatabase) {}
+
+  async execute(query: InStatement): Promise<ResultSet> {
+    const results = await this.db.batch([{ sql: query.sql, args: query.args }]);
+    return normalizeResult(results[0]);
+  }
+
+  /** See `TursoTransaction`: statements are buffered until commit. */
+  async transaction(mode: 'write' | 'read' | 'deferred'): Promise<TxObject> {
+    void mode; // Turso derives the locking mode from the BEGIN it issues.
+    return new TursoTransaction(this.db, this.mutex);
+  }
+
+  close(): void {
+    void this.db.close();
+  }
 }
 
 /* ------------------------------------------------------------------------ */
 
 export class LibSqlAdapter implements DatabaseAdapter {
-  readonly driverName = 'libsql';
+  readonly driverName = 'turso';
 
   private client: LibSqlConnection | null = null;
   private dbPath = '';
@@ -130,7 +351,11 @@ export class LibSqlAdapter implements DatabaseAdapter {
       return { code: 'FILE_NOT_FOUND', message: `Database file not found: ${filePath}` };
     }
     try {
-      this.client = getClientFactory().createClient({ url: libSqlFileUrl(filePath) });
+      // Turso takes a filesystem path directly (it does not want a file: URL),
+      // which is also why no URL escaping step is needed for names containing
+      // spaces or punctuation.
+      const db = await getTurso().connect(filePath);
+      this.client = new TursoConnection(db);
       const versionResult = await this.client.execute({ sql: 'SELECT sqlite_version();', args: [] });
       const row = versionResult.rows[0];
       this.version = row ? String(Object.values(row)[0] ?? 'unknown') : 'unknown';
@@ -174,20 +399,26 @@ export class LibSqlAdapter implements DatabaseAdapter {
   }
 
   /**
-   * The capability set for the current engine. With the native libsql engine
-   * every LibSQL capability is executable, regardless of what the on-disk
-   * dialect reports.
+   * The capability set for the shipped engine.
+   *
+   * Turso Database executes every feature the editor gates on, and additionally
+   * implements `CREATE SEQUENCE` / `nextval()`. The set is reported
+   * unconditionally because the bundled engine is the only one that can run —
+   * there is no less capable fallback that could silently take over.
    */
   private capabilities(): LibSqlCapabilities {
-    return LIBSQL_CAPABILITIES;
+    return TURSO_CAPABILITIES;
   }
 
   /**
    * Decide whether the open file is LibSQL.
    *
-   * The bundled engine is always LibSQL, so every signal that the sql.js-based
-   * adapter gathers still applies. The `fallback` flag is always false here:
-   * unlike sql.js, the native libsql engine can execute LibSQL-only statements.
+   * Every signal gathered here applies directly because the bundled engine is
+   * always LibSQL. `fallback` is passed as false: no less capable engine can
+   * take over, so a LibSQL file is never served by something that cannot run
+   * its dialect. (Feature availability is reported separately through
+   * `capabilities()` — being LibSQL and having every LibSQL feature compiled in
+   * are different questions.)
    */
   private async detectLibSql(): Promise<LibSqlDetection> {
     const objectNames = this.isOpen() ? this.schemaObjectNames() : [];
@@ -198,7 +429,7 @@ export class LibSqlAdapter implements DatabaseAdapter {
         pragmas: this.isOpen() ? this.enginePragmas() : undefined,
         objectNames
       },
-      false // native libsql engine — no fallback
+      false // single bundled engine — no fallback
     );
     return detection;
   }
@@ -224,8 +455,8 @@ export class LibSqlAdapter implements DatabaseAdapter {
   }
 
   /**
-   * True when the current file is LibSQL. With the native libsql engine this
-   * also means every LibSQL capability is executable.
+   * True when the current file is LibSQL. Note this says nothing about which
+   * LibSQL features are executable — see `capabilities()` for that.
    */
   isLibSql(): boolean {
     return this.detection?.libSql === true || this.detection?.engine === 'libsql';
@@ -238,17 +469,32 @@ export class LibSqlAdapter implements DatabaseAdapter {
     try {
       const rows = await this.run(
         `SELECT type, name, sql FROM sqlite_master
-         WHERE type IN ('table','view','index','trigger')
-         AND (? = 1 OR name NOT LIKE 'sqlite_%')
+         WHERE type IN ('table','view','index','trigger','sequence')
+         AND (? = 1 OR (name NOT LIKE 'sqlite_%' AND name NOT LIKE '__turso_internal_%'))
          ORDER BY type, name`,
         [includeHidden ? 1 : 0]
       );
-      return rows.map((r) => ({
+      const out: ObjectInfo[] = rows.map((r) => ({
         name: r.name as string,
         type: r.type as ObjectType,
         sql: (r.sql as string | null) ?? '',
-        hidden: (r.name as string).startsWith('sqlite_')
+        hidden: isInternalObject(r.name as string)
       }));
+      try {
+        const seqRows = await this.run(`SELECT name, seq FROM sqlite_sequence ORDER BY name;`);
+        for (const r of seqRows) {
+          out.push({
+            name: r.name as string,
+            type: 'sequence',
+            sql: `SELECT seq FROM sqlite_sequence WHERE name = ${quoteLiteral(r.name as string)};`,
+            hidden: false,
+            seq: Number(r.seq)
+          });
+        }
+      } catch {
+        // sqlite_sequence is optional; safe to ignore when absent.
+      }
+      return out;
     } catch (e) {
       return this.toError(e, 'Unknown error listing database objects.');
     }
@@ -466,7 +712,7 @@ export class LibSqlAdapter implements DatabaseAdapter {
 
   async executeStatements(statements: string[]): Promise<{ statements: number; affectedRows: number } | ErrorInfo> {
     if (!this.client) return { code: 'UNKNOWN', message: 'Database is not open.' };
-    let affectedRows = 0;
+    const affectedRows = 0;
     let count = 0;
     const tx = await this.client.transaction('write');
     try {
@@ -512,27 +758,49 @@ export class LibSqlAdapter implements DatabaseAdapter {
 
   /* ------------------------------ export --------------------------------- */
 
-  async export(format: ExportFormat, objectName?: string, selectSql?: string): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo> {
+  /**
+   * Write exported content to `destPath`, or to a temporary file when the caller
+   * did not supply one.
+   *
+   * The host always supplies a path (it asks the user with a save dialog), so an
+   * export lands where the user chose. The temporary fallback exists for
+   * programmatic callers and tests; because the destination is decided here, the
+   * caller must report the RETURNED path rather than reconstructing it.
+   */
+  private async writeExport(data: string, ext: string, baseName: string, destPath?: string): Promise<string> {
+    const dest =
+      destPath ??
+      path.join(await fs.promises.mkdtemp(path.join(os.tmpdir(), 'libsql-')), `${baseName}.${ext}`);
+    // A user-chosen nested directory may not exist yet.
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await fs.promises.writeFile(dest, data, 'utf8');
+    return dest;
+  }
+
+  async export(
+    format: ExportFormat,
+    objectName?: string,
+    selectSql?: string,
+    destPath?: string
+  ): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo> {
     if (!this.client) return { code: 'UNKNOWN', message: 'Database is not open.' };
     try {
       const data = await this.buildExport(format, objectName, selectSql);
-      const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'libsql-'));
-      const dest = path.join(tmpDir, `${objectName ?? 'database'}.${format}`);
-      await fs.promises.writeFile(dest, data, 'utf8');
+      const dest = await this.writeExport(data, format, objectName ?? 'database', destPath);
       return { filePath: dest, sizeBytes: Buffer.byteLength(data) };
     } catch (e) {
       return this.toError(e, 'Export failed.');
     }
   }
 
-  async exportDatabase(format: ExportFormat): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo> {
+  async exportDatabase(format: ExportFormat, destPath?: string): Promise<{ filePath: string; sizeBytes: number } | ErrorInfo> {
     if (!this.client) return { code: 'UNKNOWN', message: 'Database is not open.' };
     try {
       const objects = await this.getObjects(true);
       if (isErrorInfo(objects)) return objects;
       if (format === 'sql') {
         const parts: string[] = [];
-        parts.push('-- Exported by SQLite/LibSQL Preview&Edit');
+        parts.push('-- Exported by SQLite/LibSQL/Turso P&E');
         parts.push(`-- Database: ${this.dbPath}`);
         parts.push('--');
         for (const o of objects.filter((x) => x.sql && x.type !== 'system')) {
@@ -556,9 +824,7 @@ export class LibSqlAdapter implements DatabaseAdapter {
           parts.push(lines.join('\n') + ';');
         }
         const text = parts.join('\n') + '\n';
-        const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'libsql-'));
-        const dest = path.join(tmpDir, 'database.sql');
-        await fs.promises.writeFile(dest, text);
+        const dest = await this.writeExport(text, 'sql', 'database', destPath);
         return { filePath: dest, sizeBytes: Buffer.byteLength(text) };
       }
       if (format === 'json') {
@@ -568,9 +834,7 @@ export class LibSqlAdapter implements DatabaseAdapter {
           parts.push({ table: t.name, rows: result.rows });
         }
         const text = JSON.stringify(parts, (_k, v) => (v instanceof Uint8Array ? 'X' + bytesToHex(v) : v));
-        const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'libsql-'));
-        const dest = path.join(tmpDir, 'database.json');
-        await fs.promises.writeFile(dest, text);
+        const dest = await this.writeExport(text, 'json', 'database', destPath);
         return { filePath: dest, sizeBytes: Buffer.byteLength(text) };
       }
       return {
@@ -721,6 +985,25 @@ export class LibSqlAdapter implements DatabaseAdapter {
 
   async close(): Promise<void> {
     try {
+      // Flush the write-ahead log into the main database file first.
+      //
+      // Turso runs in WAL mode, so a committed edit lives in the `<file>-wal`
+      // sidecar until a checkpoint folds it into `<file>`. Closing alone does
+      // NOT do that: measured, the sidecar outlives `close()` and the main file
+      // still lacks the row. That is a real data-loss hazard, because the main
+      // file is what users copy, sync, attach or hand to another SQLite tool —
+      // all of which would then see a stale database.
+      //
+      // TRUNCATE (rather than PASSIVE) also empties the sidecar, so the file the
+      // user sees is self-contained. Failure is non-fatal: the data is already
+      // committed, and a read-only or externally locked file may refuse.
+      if (this.client && this.dbPath) {
+        try {
+          await this.client.execute({ sql: 'PRAGMA wal_checkpoint(TRUNCATE);', args: [] });
+        } catch {
+          /* a checkpoint is best-effort; the edit is committed either way */
+        }
+      }
       this.client?.close();
     } finally {
       this.client = null;
@@ -750,7 +1033,12 @@ export class LibSqlAdapter implements DatabaseAdapter {
       const result = await this.client.execute({ sql, args: [] });
       const row = result.rows[0];
       if (!row) return null;
-      const val = (row as Record<string, unknown>)[Object.keys(row)[0]];
+      // A row can legitimately be an empty object; `Object.keys(row)[0]` is then
+      // `undefined`, which is not a valid index. Treat it as "no value" rather
+      // than reading the undefined-keyed property.
+      const firstKey = Object.keys(row)[0];
+      if (firstKey === undefined) return null;
+      const val = (row as Record<string, unknown>)[firstKey];
       return (val as T) ?? null;
     } catch {
       return null;
@@ -759,15 +1047,18 @@ export class LibSqlAdapter implements DatabaseAdapter {
 
   /** Synchronous row helper used during detection (best-effort, may return []). */
   private syncRows(sql: string): Record<string, unknown>[] {
-    // @libsql/client has no sync API; return empty on any failure.
+    // The Turso client is promise-based only; return empty on any failure.
     // Called only during detection, where empty is a valid (non-evidencing) result.
     void sql;
     return [];
   }
 
   private async countObjects(type: 'table' | 'view' | 'index' | 'trigger'): Promise<number | null> {
+    // Excludes both reserved prefixes, so Turso's internal helper tables are not
+    // counted as user objects (see `isInternalObject`).
     return await this.scalar<number>(
-      `SELECT count(*) FROM sqlite_master WHERE type='${type}' AND name NOT LIKE 'sqlite_%';`
+      `SELECT count(*) FROM sqlite_master WHERE type='${type}'
+       AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__turso_internal_%';`
     );
   }
 
@@ -791,12 +1082,21 @@ export class LibSqlAdapter implements DatabaseAdapter {
     objectName?: string,
     selectSql?: string
   ): Promise<string> {
-    if (!objectName) {
-      throw new Error('Table-specific export requires objectName.');
+    // A caller may export a table OR an ad-hoc query. A query-based export has
+    // no table name, so requiring one here would reject a perfectly valid
+    // request — which is exactly what used to happen to "export from SQL" in the
+    // UI. Only fail when neither was supplied.
+    if (!objectName && !selectSql) {
+      throw new Error('Export requires either a table name or a SELECT statement.');
     }
-    const q = quoteIdent(objectName);
+    if (selectSql) {
+      return await this.buildExportFromQuery(format, selectSql, objectName);
+    }
+    // Narrowed by the guard above: without a query, a table name is required.
+    const tableName = objectName as string;
+    const q = quoteIdent(tableName);
     if (format === 'sql') {
-      const schema = await this.getSchema(objectName);
+      const schema = await this.getSchema(tableName);
       if (isErrorInfo(schema)) throw new Error(schema.message);
       const cols = schema.columns.map((c) => quoteIdent(c.name)).join(', ');
       const lines: string[] = [];
@@ -814,13 +1114,52 @@ export class LibSqlAdapter implements DatabaseAdapter {
       }
       return lines.join('\n') + '\n';
     }
+    const result = await this.client!.execute({ sql: `SELECT * FROM ${q};`, args: [] });
     if (format === 'json') {
-      const result = await this.client!.execute({ sql: `SELECT * FROM ${q};`, args: [] });
       return JSON.stringify(result.rows, (_k, v) => (v instanceof Uint8Array ? 'X' + bytesToHex(v) : v));
     }
-    const select = selectSql || `SELECT * FROM ${q};`;
-    const result = await this.client!.execute({ sql: select.replace(/;\s*$/, ''), args: [] });
     return rowsToCsv(result.rows);
+  }
+
+  /**
+   * Build an export from an ad-hoc SELECT rather than a whole table.
+   *
+   * The statement runs first so the result's own column names drive the output;
+   * the query is never rewritten into a `SELECT * FROM <table>`.
+   */
+  private async buildExportFromQuery(
+    format: ExportFormat,
+    selectSql: string,
+    objectName?: string
+  ): Promise<string> {
+    const statement = selectSql.replace(/;\s*$/, '');
+    const result = await this.client!.execute({ sql: statement, args: [] });
+
+    if (format === 'json') {
+      return JSON.stringify(result.rows, (_k, v) => (v instanceof Uint8Array ? 'X' + bytesToHex(v) : v));
+    }
+    if (format === 'csv') {
+      return rowsToCsv(result.rows);
+    }
+
+    // SQL: emit a reproducible script for whatever the query returned. There is
+    // no stored schema to reproduce, so the columns come from the result set and
+    // the table name is derived from the target, falling back to a neutral one,
+    // because a CREATE/INSERT pair needs some name to insert into.
+    const cols = result.columns.map((c) => quoteIdent(c)).join(', ');
+    const target = objectName ?? 'exported';
+    const lines: string[] = [];
+    if (result.rows.length > 0) {
+      lines.push(`INSERT INTO ${quoteIdent(target)} (${cols}) VALUES`);
+      const rows = result.rows.map(
+        (r) =>
+          `(${Object.keys(r)
+            .map((k) => quoteLiteral((r as Record<string, SqlValue>)[k] ?? null))
+            .join(', ')})`
+      );
+      lines.push(rows.join(',\n') + ';');
+    }
+    return lines.join('\n') + '\n';
   }
 
   private toError(e: unknown, fallback: string): ErrorInfo {
