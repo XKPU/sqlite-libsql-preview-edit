@@ -1,6 +1,6 @@
 # SQLite/LibSQL/Turso Preview&Edit
 
-## [Unreleased] - 2026-10-06
+## [v0.0.4] - 2026-10-06
 
 ### Added
 
@@ -27,4 +27,4 @@
   - Line 49 — `execSync(\`node --test ${JSON.stringify(file)}\`)`
   - Line 61 — `execSync(\`node ${JSON.stringify(path.join(__dirname, 'verify-message-router.js'))}\`)`
 
-[Unreleased]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.3...HEAD
+[v0.0.4]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.3...v0.0.4
