@@ -1,6 +1,11 @@
 # SQLite/LibSQL/Turso Preview&Edit
 
-## [Unreleased] - 2026-10-05
+## [Unreleased] - 2026-10-06
+
+### Added
+
+- Added automatic fallback to read-only mode when a file is locked, with a yellow notice shown at the bottom of the sidebar\
+  在文件被锁定时自动降级为只读模式，并在左侧边栏下方显示黄色提示
 
 ### Security
 

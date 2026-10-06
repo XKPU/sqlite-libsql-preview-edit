@@ -297,6 +297,7 @@ export const zhCn = {
 
   /* status */
   'status.readOnly': '只读',
+  'status.readOnlyLocked': '只读 —— 文件已被其他进程锁定',
   'status.writable': '可写',
   'status.opened': '已打开',
   'status.closed': '已关闭',

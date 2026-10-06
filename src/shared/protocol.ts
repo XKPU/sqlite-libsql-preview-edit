@@ -130,6 +130,16 @@ export interface DatabaseInfo {
   triggerCount: number;
   writable: boolean;
   readOnly: boolean;
+  /**
+   * Why the database was opened read-only, when `readOnly` is set.
+   *
+   * `user` means the read-only behaviour is the user's own configuration, so
+   * the UI must stay quiet about it. `locked` means another process holds the
+   * file lock and the adapter fell back to read-only rather than failing, which
+   * the UI must surface as a warning. Absent when the database is writable or
+   * when the reason could not be established.
+   */
+  readOnlyReason?: 'user' | 'locked';
   version: string;
   /**
    * Name of the driver implementation running the queries. Distinct from

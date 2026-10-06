@@ -180,6 +180,39 @@ button, input, select, textarea {
   text-align: center;
 }
 
+/*
+ * The read-only-by-lock notice, pinned to the bottom-left of the sidebar.
+ *
+ * It is the last flex child of `.object-tree` so it holds the bottom edge while
+ * `.tree-groups` takes the remaining height and scrolls. It only renders when
+ * the adapter fell back to read-only because another process holds the lock —
+ * a read-only database the user configured shows nothing here.
+ */
+.tree-lock-warning {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--vscode-editorWarning-foreground);
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  border-top: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+}
+
+.tree-lock-warning-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.tree-lock-warning-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* --- Center Area ---------------------------------------------------------- */
 
 .center {

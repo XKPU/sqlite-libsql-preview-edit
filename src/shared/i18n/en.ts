@@ -301,6 +301,7 @@ export const en = {
 
   /* status */
   'status.readOnly': 'Read-only',
+  'status.readOnlyLocked': 'Read-only — the file is locked by another process',
   'status.writable': 'Writable',
   'status.opened': 'Opened',
   'status.closed': 'Closed',

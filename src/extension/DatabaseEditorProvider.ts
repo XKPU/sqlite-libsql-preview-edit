@@ -56,6 +56,16 @@ interface Session {
   panel: vscode.WebviewPanel;
   document: DatabaseDocument;
   adapter: DatabaseAdapter;
+  /**
+   * Why the initial `open()` failed, if it did.
+   *
+   * The first open is kicked off as soon as the editor resolves, which is
+   * before the webview script has loaded and attached its message listener —
+   * so an error posted at that moment is dropped and the webview stays on its
+   * loading placeholder forever. Replaying it when the webview sends `init`
+   * closes that race.
+   */
+  openError?: ErrorInfo;
 }
 
 /**
@@ -158,7 +168,16 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
       // is already being torn down and re-entrant disposal would recurse.
     });
 
-    void this.openAndReport(session, doc.uri);
+    void this.openAndReport(session, doc.uri).catch((e: unknown) => {
+      // Without this, a rejection here is an unhandled promise rejection and the
+      // editor would sit on its loading placeholder with no explanation.
+      this.logger.error(`openAndReport threw: ${e instanceof Error ? e.message : String(e)}`);
+      this.postMessage(session.panel, {
+        id: 0,
+        type: 'error',
+        error: { code: 'UNKNOWN', message: e instanceof Error ? e.message : String(e) }
+      });
+    });
   }
 
   dispose(): void {
@@ -265,6 +284,16 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
         case 'init':
           // Handshake: (re)send the snapshot the webview may have missed
           // because it was not listening when resolveCustomEditor pushed it.
+          //
+          // A failed open is replayed here rather than only at open time: the
+          // webview attaches its listener after the host has already tried to
+          // open, so the original failure notice would be lost and the editor
+          // would sit on its loading placeholder.
+          if (session.openError) {
+            this.logger.info(`replaying open failure on init (${session.openError.code})`);
+            respond({ id: msg.id, type: 'error', error: session.openError });
+            return;
+          }
           await this.sendState(session, msg.id);
           return;
         case 'close':
@@ -489,7 +518,14 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
           if (target.fsPath !== session.document.uri.fsPath) {
             session.document = new DatabaseDocument(target);
           }
-          await this.openAndReport(session, target);
+          // Reopen an existing session on a different file. `openAndReport`
+          // reports failures itself, so the only additional guard needed is
+          // against an unexpected throw leaving the panel on a stale state.
+          try {
+            await this.openAndReport(session, target);
+          } catch (e: unknown) {
+            this.logger.error(`reopen threw: ${e instanceof Error ? e.message : String(e)}`);
+          }
           return;
         }
         default: {
@@ -585,6 +621,10 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
     const r = await session.adapter.open(uri.fsPath);
     if (isError(r)) {
       this.logger.error(`open failed (${r.code}): ${r.message}`);
+      // Remember the cause: the webview is very likely not listening yet (see
+      // `Session.openError`), so this post may be dropped. The `init` handler
+      // replays it.
+      session.openError = r;
       this.postMessage(session.panel, {
         id: 0,
         type: 'error',
@@ -592,6 +632,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
       });
       return;
     }
+    session.openError = undefined;
     this.logger.info(
       `opened: driver=${r.driver} engine=${r.engine} version=${r.version} size=${r.sizeBytes} writable=${r.writable}`
     );

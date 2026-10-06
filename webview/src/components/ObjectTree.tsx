@@ -153,6 +153,15 @@ export const ObjectTree: React.FC<ObjectTreeProps> = ({ state }) => {
 
   const activeKey = currentObject ? `${currentObject.kind}:${currentObject.name}` : undefined;
 
+  /**
+   * Only a lock-triggered fallback is worth warning about.
+   *
+   * A database the user deliberately configured as read-only is the state they
+   * asked for, so it must stay silent; `locked` means the adapter had to give
+   * up write access because another process holds the file.
+   */
+  const showLockWarning = state.dbInfo?.readOnlyReason === 'locked';
+
   return (
     <aside className="object-tree" ref={containerRef}>
       <div className="tree-header">
@@ -212,6 +221,13 @@ export const ObjectTree: React.FC<ObjectTreeProps> = ({ state }) => {
         })}
         {objects.length === 0 && <div className="tree-empty">{t('tree.none')}</div>}
       </div>
+
+      {showLockWarning && (
+        <div className="tree-lock-warning" role="status" aria-live="polite" title={t('status.readOnlyLocked')}>
+          <Icon name="warning" size={12} className="tree-lock-warning-icon" aria-hidden="true" />
+          <span className="tree-lock-warning-text">{t('status.readOnlyLocked')}</span>
+        </div>
+      )}
 
       {menu && <ContextMenu open x={menu.x} y={menu.y} items={buildMenuItems(menu.obj)} onClose={() => setMenu(null)} />}
     </aside>

@@ -133,7 +133,30 @@ interface TursoNativeDatabase {
   close(): void | Promise<void>;
 }
 
-type TursoConnect = (path: string) => Promise<TursoNativeDatabase>;
+/**
+ * The subset of upstream `DatabaseOpts` this adapter sets.
+ *
+ * Declared structurally rather than imported so a missing type export in the
+ * published `.d.ts` cannot break the build; the fields are copied from the real
+ * declaration in `@tursodatabase/database-common/dist/types.d.ts`.
+ */
+export interface TursoConnectOpts {
+  /**
+   * Busy timeout in ms for **statement** execution. Upstream documents the
+   * default as `0` ("no timeout"), which is what made a contended write fail
+   * instantly instead of waiting for the peer to commit.
+   *
+   * Measured: this budget does NOT cover the OPEN-time lock acquisition — a
+   * `connect()` blocked by another Turso process fails in ~1 ms even with
+   * `timeout: 60000`. Open-time contention is escaped with `readonly` instead;
+   * see `open()`.
+   */
+  timeout?: number;
+  /** Open the file read-only. Escapes an open-time lock held by a peer. */
+  readonly?: boolean;
+}
+
+type TursoConnect = (path: string, opts?: TursoConnectOpts) => Promise<TursoNativeDatabase>;
 
 let tursoModule: { connect: TursoConnect } | null = null;
 
@@ -143,6 +166,34 @@ function getTurso(): { connect: TursoConnect } {
     tursoModule = require('@tursodatabase/database') as { connect: TursoConnect };
   }
   return tursoModule;
+}
+
+/**
+ * How long a contended **statement** may keep retrying before giving up.
+ *
+ * Upstream defaults this to `0`, i.e. a single attempt and an immediate
+ * `database is locked`. With a 5 s budget a write simply waits for the peer to
+ * commit: measured, a write blocked by another process's `IMMEDIATE`
+ * transaction succeeded 2062 ms later, right after that peer's `COMMIT`,
+ * instead of failing. Upstream covers the same contract with its own
+ * `busy timeout` tests in `database/dist/promise.test.js`.
+ *
+ * This budget cannot cover the open-time lock; see `TursoConnectOpts`.
+ */
+export const LOCK_TIMEOUT_MS = 5000;
+
+/**
+ * True when an error means "another process holds the file lock", as opposed to
+ * a syntax error, a corrupt file or a permission problem.
+ *
+ * Both upstream wordings are covered: an open-time failure reads `failed to
+ * open database <path>: Locking error: Failed locking file. File is locked by
+ * another process`, and a statement-time one reads `database is locked` or
+ * `database is busy`.
+ */
+function isLockError(e: unknown): boolean {
+  const lower = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return lower.includes('lock') || lower.includes('busy');
 }
 
 /* ---- adapters between the two call shapes ------------------------------ */
@@ -232,6 +283,13 @@ class Mutex {
  *
  * `commit()` holds the connection's mutex for its whole BEGIN…COMMIT block, so
  * concurrent transactions queue instead of nesting.
+ *
+ * NOTHING retries a locked write here, and that is deliberate. The connection is
+ * opened with `LOCK_TIMEOUT_MS`, which upstream applies to every statement step:
+ * measured, a write that met another process's `IMMEDIATE` lock waited 2062 ms
+ * and then landed, right after that process committed, instead of failing at
+ * 0 ms. Adding a retry loop on top would only duplicate a budget the engine
+ * already enforces (and its own `busy timeout` tests pin that contract).
  */
 class TursoTransaction implements TxObject {
   private readonly queued: TursoStatement[] = [];
@@ -334,12 +392,27 @@ export class LibSqlAdapter implements DatabaseAdapter {
   private dbSizeBytes = 0;
   private writable = true;
   private readOnlyFlag = false;
+  /**
+   * Set when `open()` had to fall back to a read-only connection because
+   * another process held the file lock. Deliberately separate from
+   * `readOnlyFlag` (the user's own setting) so the UI can tell "you asked for
+   * read-only" from "you are read-only because something else has the file".
+   */
+  private lockFallback = false;
+  /**
+   * The failure that stopped `open()`, kept so `getInfo()` can report the real
+   * cause. Without it every later `getInfo()` reported `UNKNOWN`/"Database is
+   * not open.", which buried the `DB_LOCKED` verdict the user actually needs.
+   */
+  private openError: ErrorInfo | null = null;
   private detection: LibSqlDetection | null = null;
   private version: string = '';
 
   async open(filePath: string): Promise<DatabaseInfo | ErrorInfo> {
     this.dbPath = filePath;
     this.detection = null;
+    this.openError = null;
+    this.lockFallback = false;
     let stats: fs.Stats;
     try {
       stats = await fs.promises.stat(filePath);
@@ -348,13 +421,46 @@ export class LibSqlAdapter implements DatabaseAdapter {
         .access(filePath, fs.constants.W_OK)
         .then(() => true, () => false);
     } catch {
-      return { code: 'FILE_NOT_FOUND', message: `Database file not found: ${filePath}` };
+      const error: ErrorInfo = {
+        code: 'FILE_NOT_FOUND',
+        message: `Database file not found: ${filePath}`
+      };
+      // Recorded like every other open failure, so `getInfo()` reports the real
+      // reason instead of degenerating to `UNKNOWN`.
+      this.openError = error;
+      return error;
     }
     try {
       // Turso takes a filesystem path directly (it does not want a file: URL),
       // which is also why no URL escaping step is needed for names containing
       // spaces or punctuation.
-      const db = await getTurso().connect(filePath);
+      //
+      // The timeout is the busy budget for every statement issued on this
+      // connection. Turso defaults it to `0`, which means a write that meets
+      // another process's lock fails on the FIRST attempt instead of waiting for
+      // that process to commit — the failure mode this adapter exists to avoid.
+      let db: TursoNativeDatabase;
+      try {
+        db = await getTurso().connect(filePath, { timeout: LOCK_TIMEOUT_MS });
+      } catch (e) {
+        // A lock held by another process fails during OPEN, and the busy
+        // timeout does not cover it: measured, `connect()` fails in ~1 ms even
+        // with `timeout: 60000`. The one option that does get through is
+        // `readonly`, which needs no write lock — measured to open and read
+        // while a peer held a never-released `BEGIN IMMEDIATE`.
+        //
+        // Degrading to read-only beats refusing to open: the user can still
+        // browse and query the file, and is told why it is not editable.
+        if (!isLockError(e)) throw e;
+        try {
+          db = await getTurso().connect(filePath, { readonly: true, timeout: LOCK_TIMEOUT_MS });
+          this.lockFallback = true;
+        } catch {
+          // Still locked even read-only: report the ORIGINAL error, which
+          // describes the lock, rather than this secondary failure.
+          throw e;
+        }
+      }
       this.client = new TursoConnection(db);
       const versionResult = await this.client.execute({ sql: 'SELECT sqlite_version();', args: [] });
       const row = versionResult.rows[0];
@@ -362,7 +468,12 @@ export class LibSqlAdapter implements DatabaseAdapter {
       this.detection = await this.detectLibSql();
       return await this.info();
     } catch (e) {
-      return this.toError(e, 'Unknown error while opening the database.');
+      // Remember the failure so `getInfo()` can keep reporting it: the UI asks
+      // for info after a failed open, and answering "not open" would hide the
+      // lock (or corruption, or permission) that actually stopped us.
+      const error = this.toError(e, 'Unknown error while opening the database.');
+      this.openError = error;
+      return error;
     }
   }
 
@@ -371,7 +482,12 @@ export class LibSqlAdapter implements DatabaseAdapter {
   }
 
   async getInfo(): Promise<DatabaseInfo | ErrorInfo> {
-    if (!this.client) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    // Report the real reason the database could not be opened. Falling back to
+    // a generic "not open" here is what used to turn a `DB_LOCKED` verdict into
+    // `UNKNOWN` and send the user hunting for the wrong problem.
+    if (!this.client) {
+      return this.openError ?? { code: 'UNKNOWN', message: 'Database is not open.' };
+    }
     return await this.info();
   }
 
@@ -388,8 +504,14 @@ export class LibSqlAdapter implements DatabaseAdapter {
       viewCount: (await this.countObjects('view')) ?? 0,
       indexCount: (await this.countObjects('index')) ?? 0,
       triggerCount: (await this.countObjects('trigger')) ?? 0,
-      writable: this.writable,
-      readOnly: this.readOnlyFlag,
+      // A connection that had to open read-only cannot write, whatever the file
+      // permissions say — report that first, so the UI does not offer edits the
+      // engine will reject.
+      writable: this.writable && !this.lockFallback,
+      readOnly: this.readOnlyFlag || this.lockFallback,
+      // Only set when read-only; `undefined` when writable, so the UI's
+      // `=== 'locked'` check stays a precise signal.
+      readOnlyReason: this.lockFallback ? 'locked' : this.readOnlyFlag ? 'user' : undefined,
       version: this.version,
       driver: this.driverName,
       engine: detection.engine,
@@ -974,7 +1096,7 @@ export class LibSqlAdapter implements DatabaseAdapter {
   /* ------------------------------ lifecycle ------------------------------ */
 
   async isWritable(): Promise<boolean> {
-    if (!this.writable || this.readOnlyFlag) return false;
+    if (!this.writable || this.readOnlyFlag || this.lockFallback) return false;
     if (!this.client) return false;
     try {
       await this.client.execute({ sql: 'SELECT 1;', args: [] });
@@ -1010,6 +1132,10 @@ export class LibSqlAdapter implements DatabaseAdapter {
     } finally {
       this.client = null;
       this.dbPath = '';
+      // A stale verdict must not outlive the connection, or reopening a
+      // different file would report the previous one's lock.
+      this.lockFallback = false;
+      this.openError = null;
     }
   }
 
