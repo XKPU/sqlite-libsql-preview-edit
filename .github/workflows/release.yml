@@ -68,12 +68,21 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Node 22 is required by the build toolchain, not by the extension:
-          # `@vscode/vsce` 4 declares `engines: { node: ">= 22" }` and pulls in
-          # `@azure/identity` 4, whose transitive packages also need 22. The VS
-          # Code extension host itself is unaffected — it never loads any of
-          # these, they are packaging-time-only dependencies.
-          node-version: '22'
+          # Node 24, deliberately above the minimum the build toolchain allows.
+          # `@vscode/vsce` 4 only declares `engines: { node: ">= 22" }`, but the
+          # npm bundled with Node 22 (npm 10) ships node-gyp 11, which cannot
+          # detect the Visual Studio 2026 (18.x) installation on the current
+          # `windows-latest` image (`windows-2025-vs2026`, VS Enterprise 18.x).
+          # npm runs an IMPLICIT `node-gyp rebuild` for `better-sqlite3` because
+          # the package ships a `binding.gyp`, and the configure step dies before
+          # `binding.gyp` can no-op itself. Reproduced locally against VS 2026:
+          #   gyp ERR! find VS unknown version "undefined" found at
+          #   "C:\Program Files\Microsoft Visual Studio\18\Professional"
+          #   gyp ERR! find VS could not find a version of Visual Studio 2017 ...
+          # npm 11 (Node 24) ships node-gyp >= 12.1, which added VS 18 support.
+          # The VS Code extension host itself is unaffected — none of these
+          # packaging-time-only dependencies are ever loaded by the extension.
+          node-version: '24'
           cache: npm
 
       # The native runtime is not needed to typecheck or run the unit tests,
@@ -135,9 +144,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Must match the `verify` job and satisfy `@vscode/vsce`'s
-          # `engines: { node: ">= 22" }`, which the packaging step runs.
-          node-version: '22'
+          # Must match the `verify` job. Node 24 rather than 22 because the npm
+          # bundled with Node 22 (npm 10) ships node-gyp 11, which cannot detect
+          # Visual Studio 2026 on the current `windows-latest` image and fails
+          # the implicit `node-gyp rebuild` for `better-sqlite3`; npm 11 bundles
+          # node-gyp >= 12.1, which can. See the `verify` job for the full log.
+          node-version: '24'
           # Caches only the npm DOWNLOAD cache (~/.npm), which is platform
           # independent. The installed node_modules is NOT cached, so each matrix
           # entry installs the dependency tree fresh.
@@ -164,10 +176,17 @@ jobs:
       # process.platform / process.arch, which is exactly what is wanted here.
       #
       # `npm ci` is used (not `npm install`) so the lockfile is authoritative.
+      #
+      # The echo comes FIRST on purpose. On Windows the default shell is pwsh,
+      # which does not stop on a failing native command: the step exits with
+      # `$LASTEXITCODE`, the status of the LAST native command only. With the
+      # echo last, a failing `npm ci` was masked by the succeeding `node -e` and
+      # the step reported success, so the failure only surfaced one step later as
+      # a confusing "Cannot find module .../typescript/bin/tsc".
       - name: Install dependencies for ${{ matrix.target }}
         run: |
+          node -e "console.log('installing for', process.platform, process.arch)"
           npm ci
-          node -e "console.log('installed for', process.platform, process.arch)"
 
       # The smoke test loads the COMPILED adapter (it exercises the real code path
       # rather than the TypeScript source), so the extension must be built first.
