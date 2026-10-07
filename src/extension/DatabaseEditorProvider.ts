@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { DatabaseAdapter } from './adapter/adapter';
-import { LibSqlAdapter } from './adapter/libSqlAdapter';
+import { SqliteAdapter } from './adapter/sqliteAdapter';
 import {
   ErrorInfo,
   ExportFormat,
@@ -100,17 +100,20 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
   }
 
   /**
-   * Create the database adapter — the native Turso Database engine.
+   * Create the database adapter — the native SQLite engine (`better-sqlite3`).
    *
-   * There is exactly one engine: `@tursodatabase/database`, a local-file engine
-   * that reads and writes the shared `SQLite format 3` container. Because the
-   * three dialects share that container, this single adapter opens SQLite,
-   * libSQL and Turso Database files alike, so there is no fallback path to
-   * select between. The packaged VSIX must ship the engine's native binary,
-   * otherwise construction fails immediately.
+   * There is exactly one engine: a local-file binding to stock SQLite, which
+   * reads and writes the shared `SQLite format 3` container. Because all three
+   * dialects share that container, this single adapter opens SQLite, libSQL and
+   * Turso Database files alike, so there is no fallback path to select between.
+   * A Turso file still opens and its ordinary tables still read and write; only
+   * statements exclusive to that engine fail, which `capabilities` reports.
+   *
+   * The packaged VSIX must ship the engine's native binary, otherwise
+   * construction fails immediately.
    */
   private createAdapter(): DatabaseAdapter {
-    return new LibSqlAdapter();
+    return new SqliteAdapter();
   }
 
   /* ------------------------------- lifecycle ---------------------------- */

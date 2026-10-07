@@ -30,7 +30,7 @@ A VS Code extension for previewing and editing **SQLite / LibSQL / Turso** datab
 
 ## Driver
 
-The extension runs on the built-in **native Turso Database driver** (`@tursodatabase/database`, i.e., the Rust implementation of SQLite).
+The extension runs on the built-in **native SQLite driver** (`better-sqlite3@13`, a native binding to stock SQLite).
 It directly opens local files and reads/writes the universal `SQLite format 3` container format, so the same editor can handle **SQLite, LibSQL, and Turso Database** files.
 
 This is the only driver, and it is used for every file. See [Driver vs dialect](#driver-vs-dialect) for how the label differs from the driver.
@@ -49,8 +49,9 @@ If your platform is not listed, the extension cannot load the driver, and no dat
 ## Features
 
 - `.db` / `.sqlite` / `.sqlite3` / `.libsql` / `.turso` files (see [Supported databases](#supported-databases))
-- Standard SQLite feature set
-- Turso Database extras: sequences (`CREATE SEQUENCE` / `nextval()`), `STRICT` tables, `ALTER TABLE … ALTER COLUMN`, vector functions, non-constant defaults
+- Based on **SQLite 3 itself**, so the executable feature set is the standard one: `STRICT` tables, `ALTER TABLE … RENAME COLUMN` / `DROP COLUMN`, `RETURNING`, UPSERT, and `ADD COLUMN` with a non-constant default
+- Features that only Turso Database provided are **not available**: `CREATE SEQUENCE` / `nextval()`, `ALTER TABLE … ALTER COLUMN`, and the `vector_*` functions — stock SQLite rejects them (for example `near "SEQUENCE": syntax error`)
+- Files using those features still open and browse normally; only executing such a statement fails
 - Automatic dialect detection (SQLite, LibSQL, or Turso Database)
 - UI follows VS Code theme colors
 - Data browser
@@ -76,11 +77,11 @@ Because the container is shared, **all three open directly — recognition never
 
 The info panel reports two independent values.
 
-**Driver** — the implementation that executes queries. Its value is always `turso`: Turso Database is the only bundled driver and there is no fallback.
+**Driver** — the implementation that executes queries. Its value is always `sqlite`: the bundled `better-sqlite3` engine is the only driver and there is no fallback.
 
 **Dialect** — the SQL dialect the file is written in, inferred from the file itself. Its value is `SQLite`, `LibSQL`, or `Turso Database`.
 
-The dialect is reported for information only. It does not select the driver, enable or disable any capability, or affect how a statement is executed; every file is handled by the same driver with the same feature set. A `.db` file is reported as `SQLite` because that describes the file's content, and it supports everything a `.turso` file does.
+The dialect is reported for information only. It does not select the driver, enable or disable any capability, or affect how a statement is executed; every file is handled by the same driver with the same feature set. A `.db` file is reported as `SQLite` because that describes the file's content, and it is executed exactly like a `.turso` file.
 
 The info panel row labelled **Engine** shows the dialect value.
 

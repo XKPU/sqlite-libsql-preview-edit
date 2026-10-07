@@ -30,7 +30,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## 驱动
 
-扩展运行于内置的 **原生 Turso Database 驱动**（`@tursodatabase/database`，即 SQLite 的 Rust 实现）。
+扩展运行于内置的 **原生 SQLite 驱动**（`better-sqlite3@13`，即 stock SQLite 的原生绑定）。
 它直接打开本地文件，并读写通用的 `SQLite format 3` 容器格式，因此同一个编辑器即可处理 **SQLite、LibSQL 与 Turso Database** 三种文件。
 
 这是唯一的驱动，所有文件都由它处理。驱动与该标签的区别见[驱动与方言](#驱动与方言)。
@@ -49,8 +49,9 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 ## 功能
 
 - `.db` / `.sqlite` / `.sqlite3` / `.libsql` / `.turso` 文件（见[支持的数据库](#支持的数据库)）
-- 标准 SQLite 功能集
-- Turso Database 扩展能力：序列（`CREATE SEQUENCE` / `nextval()`）、`STRICT` 表、`ALTER TABLE … ALTER COLUMN`、向量函数、非常量默认值
+- 基于**标准 SQLite 3 本体**，因此可执行的特性集就是标准的那一套：`STRICT` 表、`ALTER TABLE … RENAME COLUMN` / `DROP COLUMN`、`RETURNING`、UPSERT，以及带非常量默认值的 `ADD COLUMN`
+- 原先只有 Turso Database 才提供的特性**不再可用**：`CREATE SEQUENCE` / `nextval()`、`ALTER TABLE … ALTER COLUMN`，以及 `vector_*` 系列函数 —— 标准 SQLite 会直接拒绝（例如 `near "SEQUENCE": syntax error`）
+- 使用这些特性的文件仍可正常打开与浏览；只有执行这类语句会失败
 - 自动方言检测（SQLite、LibSQL 或 Turso Database）
 - UI 跟随 VS Code 主题颜色
 - 数据浏览器
@@ -75,11 +76,11 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 
 信息面板显示两个彼此独立的字段。
 
-**驱动（Driver）** —— 实际执行查询的实现，取值始终为 `turso`：Turso Database 是唯一内置的驱动，不存在回退。
+**驱动（Driver）** —— 实际执行查询的实现，取值始终为 `sqlite`：内置的 `better-sqlite3` 引擎是唯一驱动，不存在回退。
 
 **方言（Dialect）** —— 文件所用的 SQL 方言，由文件自身推断得出，取值为 `SQLite`、`LibSQL` 或 `Turso Database`。
 
-方言仅用于显示说明：它不决定使用哪个驱动，不启用或禁用任何能力，也不影响语句的执行方式 —— 所有文件都由同一个驱动、以同一套功能集处理。`.db` 文件被显示为 `SQLite`，只是因为它描述的是文件内容，其支持的功能与 `.turso` 文件完全相同。
+方言仅用于显示说明：它不决定使用哪个驱动，不启用或禁用任何能力，也不影响语句的执行方式 —— 所有文件都由同一个驱动、以同一套功能集处理。`.db` 文件被显示为 `SQLite`，只是因为它描述的是文件内容，其执行方式与 `.turso` 文件完全相同。
 
 信息面板中标注为 **Engine** 的一行，显示的就是方言值。
 

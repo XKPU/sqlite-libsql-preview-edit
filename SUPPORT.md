@@ -24,7 +24,7 @@ The following covers the most common issues.
 
 ### The extension will not load on my platform
 
-Only four architectures ship a prebuilt driver binary. See [Driver](README.md#driver) in the README.
+Only four architectures are supported. See [Driver](README.md#driver) in the README.
 
 | OS | Architecture |
 | --- | --- |
@@ -32,7 +32,13 @@ Only four architectures ship a prebuilt driver binary. See [Driver](README.md#dr
 | macOS | Apple silicon (`arm64`) |
 | Linux | x64, `arm64` (glibc) |
 
-macOS Intel, Alpine/musl, and Windows `arm64` are not supported: no binary is published for them.
+macOS Intel, Alpine/musl, and Windows `arm64` are not supported. The bundled engine does ship binaries for them, but the extension has never advertised or tested those platforms, so no VSIX is built for them.
+
+### A lock conflict: "database is locked"
+
+The engine is stock SQLite in **normal** locking mode, so it cooperates with other processes rather than fencing them off: a program that has the database open can keep reading and writing while the extension holds it open, in WAL and rollback-journal mode alike. (The previous engine opened files in `locking_mode = exclusive`, which blocked every other process even in WAL — that is fixed.)
+
+If another program is mid-transaction, the extension waits only briefly (250 ms) for the lock, then fails with a clear `database is locked` error rather than reporting a success that did not happen. A longer wait does not help: a service that holds a transaction open indefinitely produces the same error whatever the budget, so a short one only spares you the freeze. Retry once the other process finishes. Read-only mode (`libSqlPreviewEdit.readOnly`) avoids taking write locks altogether.
 
 ### "Extension updated — reload the window to finish"
 
@@ -40,7 +46,7 @@ Installing or upgrading does not restart a window that is already open. Run **De
 
 ### The reported dialect looks wrong
 
-`.db`, `.sqlite`, `.sqlite3`, `.libsql`, and `.turso` are all supported. The **driver** is always Turso Database; the **dialect** reports what the file contains, not which implementation is loaded. See [Driver vs dialect](README.md#driver-vs-dialect).
+`.db`, `.sqlite`, `.sqlite3`, `.libsql`, and `.turso` are all supported. The **driver** is always the bundled native SQLite engine (`better-sqlite3`); the **dialect** reports what the file contains, not which implementation is loaded. See [Driver vs dialect](README.md#driver-vs-dialect).
 
 ### Something failed and I need details
 

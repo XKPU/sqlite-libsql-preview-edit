@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 K_PU
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Prove the native Turso Database engine for the CURRENT platform loads and can
- * open a real database file.
+ * Prove the native SQLite engine for the CURRENT platform loads and can open a
+ * real database file.
  *
- * Why this exists: the extension ships `@tursodatabase/database`, which resolves
- * a platform-specific binary (`@tursodatabase/database-<platform>`) at run time.
- * If a CI packaging step installs the wrong platform's optional dependency (a
- * stray `npm_config_arch`, a cache hit from another matrix entry), the VSIX
- * builds fine and fails for every user. This script fails the build instead.
+ * Why this exists: the extension ships `better-sqlite3`, which resolves a
+ * platform-specific prebuilt binary (`prebuilds/<platform>-<arch>.node`) at run
+ * time. If a packaging step drops the wrong one — or the package is pruned so
+ * aggressively that the prebuilds directory does not survive — the VSIX builds
+ * fine and fails for every user. This script fails the build instead.
  *
  * It deliberately uses the SAME entry point the extension uses — the compiled
  * adapter — so a broken factory or a changed client API is caught here too.
@@ -26,10 +26,16 @@ const root = path.resolve(__dirname, '..');
 /**
  * Locate the compiled adapter module in `out/extension/adapter/`.
  *
- * The adapter may be renamed (e.g. `libSqlAdapter.js` -> `tursoAdapter.js`), and
- * this script must survive that rename, so the file is DISCOVERED rather than
- * hardcoded. `adapter.js`/`common.js` are supporting modules, never the adapter
- * itself; the adapter is the one that exports a `*Adapter` class.
+ * The adapter may be renamed (e.g. `sqliteAdapter.js` -> `sqlite3Adapter.js`), so
+ * the file is DISCOVERED rather than hardcoded. `adapter.js`/`common.js` are
+ * supporting modules, never the adapter itself; the adapter is the one that
+ * exports a `*Adapter` class.
+ *
+ * Discovery alone is not enough to pick the right one, and this bit the build
+ * once: when two adapters were present, taking the first match tested whichever
+ * the filesystem happened to list first — not the one the extension actually
+ * loads. The selection is therefore anchored to the implementation the host
+ * really uses, by asking `DatabaseEditorProvider` which class it constructs.
  */
 function findAdapterModules() {
   const dir = path.join(root, 'out', 'extension', 'adapter');
@@ -49,35 +55,87 @@ function findAdapterModules() {
     });
 }
 
-const adapters = findAdapterModules();
-const exported = adapters[0];
+/**
+ * The adapter class the extension actually constructs at runtime.
+ *
+ * Read out of the compiled provider's source rather than guessed, so this script
+ * always exercises the shipped driver. TypeScript emits the construction through
+ * the module namespace (`new sqliteAdapter_1.SqliteAdapter()`), so the match
+ * allows an optional `alias.` prefix and returns only the class name.
+ *
+ * Returns the class name, or `null` when the provider cannot be read (reported as
+ * a failure by the caller).
+ */
+function adapterInUse() {
+  const provider = path.join(root, 'out', 'extension', 'DatabaseEditorProvider.js');
+  if (!fs.existsSync(provider)) return null;
+  const src = fs.readFileSync(provider, 'utf8');
+  const match = src.match(/new\s+(?:[A-Za-z_$][\w$]*\.)?([A-Za-z_$][\w$]*Adapter)\s*\(/);
+  return match ? match[1] : null;
+}
 
-if (!exported) {
+const adapters = findAdapterModules();
+const wanted = adapterInUse();
+
+if (!wanted) {
   console.error(
-    'Compiled adapter not found in out/extension/adapter/\nRun "npm run compile:extension" first.'
+    'Could not tell which adapter DatabaseEditorProvider constructs.\nRun "npm run compile:extension" first.'
   );
   process.exit(1);
 }
 
-/** Where the native binary resolved from, for the log. */
+const exported =
+  adapters.find((full) => {
+    const mod = require(full);
+    return typeof mod[wanted] === 'function';
+  }) ?? null;
+
+if (!exported) {
+  console.error(
+    `The provider constructs ${wanted}, but no compiled adapter exports it.\n` +
+      `Found: ${adapters.map((f) => path.basename(f)).join(', ') || '(none)'}\n` +
+      'Run "npm run compile:extension" first.'
+  );
+  process.exit(1);
+}
+
+/**
+ * Report which prebuilt binary this platform will load, for the log.
+ *
+ * `better-sqlite3` picks the binary itself from `process.platform`/`process.arch`
+ * (and musl detection on Linux), so the useful fact is not which optional package
+ * got installed but WHICH prebuild resolves — and whether it is actually present.
+ * A missing prebuild is the failure this script exists to catch, so it is reported
+ * explicitly rather than left to a require() stack trace.
+ */
 function describeRuntime() {
-  const tried = [];
-  for (const name of [
-    `@tursodatabase/database-${process.platform}-${process.arch}`,
-    '@tursodatabase/database-win32-x64-msvc',
-    '@tursodatabase/database-linux-x64-gnu',
-    '@tursodatabase/database-linux-arm64-gnu',
-    '@tursodatabase/database-darwin-arm64',
-    '@tursodatabase/database'
-  ]) {
-    try {
-      const pkgPath = require.resolve(`${name}/package.json`, { paths: [root] });
-      tried.push(`${name} -> ${path.relative(root, pkgPath)}`);
-    } catch {
-      tried.push(`${name} -> (not installed)`);
-    }
+  const lines = [];
+
+  let pkgPath = null;
+  try {
+    pkgPath = require.resolve('better-sqlite3/package.json', { paths: [root] });
+  } catch {
+    lines.push('better-sqlite3 -> (not installed)');
+    return lines;
   }
-  return tried;
+  lines.push(`better-sqlite3 -> ${path.relative(root, pkgPath)}`);
+
+  // `lib/binding.js` exposes the same resolver the addon uses at require time,
+  // so asking it is a stronger check than recomputing the path ourselves.
+  try {
+    const binding = require(path.join(path.dirname(pkgPath), 'lib', 'binding.js'));
+    if (typeof binding.getPrebuildPath === 'function') {
+      const prebuild = binding.getPrebuildPath();
+      lines.push(
+        prebuild
+          ? `prebuild       -> ${path.relative(root, prebuild)}`
+          : `prebuild       -> (none for ${process.platform}-${process.arch}; would build from source)`
+      );
+    }
+  } catch {
+    lines.push('prebuild       -> (could not resolve lib/binding.js)');
+  }
+  return lines;
 }
 
 (async () => {
@@ -86,17 +144,16 @@ function describeRuntime() {
   console.log(`adapter : ${path.relative(root, exported)}`);
 
   const adapterModule = require(exported);
-  const className = Object.keys(adapterModule).find(
-    (k) => /Adapter$/.test(k) && typeof adapterModule[k] === 'function'
-  );
-  const LibSqlAdapter = adapterModule[className];
-  assert.equal(typeof LibSqlAdapter, 'function', 'the adapter class must be exported');
+  // The class the provider constructs, resolved above — not "whatever this file
+  // happens to export first".
+  const AdapterClass = adapterModule[wanted];
+  assert.equal(typeof AdapterClass, 'function', `${wanted} must be exported by the adapter module`);
 
   const file = path.join(os.tmpdir(), `smoke-native-${process.pid}-${Date.now()}.db`);
   fs.writeFileSync(file, '');
 
   try {
-    const adapter = new LibSqlAdapter();
+    const adapter = new AdapterClass();
     const info = await adapter.open(file);
     assert.ok(!info.code, `opening a database failed: ${info.code} ${info.message}`);
     console.log(`opened   : driver=${info.driver} engine=${info.engine} version=${info.version}`);

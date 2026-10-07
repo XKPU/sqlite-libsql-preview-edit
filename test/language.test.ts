@@ -171,11 +171,24 @@ describe('failed open does not hang on the loading placeholder', () => {
 describe('corrupt files are classified, not reported as unknown', () => {
   it('maps SQLite wording to a localized phrase', async () => {
     const fs = await import('node:fs/promises');
-    const src = await fs.readFile('src/extension/adapter/libSqlAdapter.ts', 'utf8');
-    // The native engine reports exactly "file is not a database" for a
-    // non-database file; without this pattern the code was UNKNOWN and the UI
-    // showed raw English driver text.
-    assert.match(src, /lower\.includes\('not a database'\)/, 'that wording must map to DB_CORRUPT');
+    // Discover the adapter rather than naming a file: it has been renamed once
+    // already (`libSqlAdapter.ts` -> `sqliteAdapter.ts`) and the assertion is
+    // about the behaviour, not the filename. Every `*Adapter.ts` is checked, so a
+    // second implementation cannot quietly drop the mapping either.
+    const dir = 'src/extension/adapter';
+    const adapters = (await fs.readdir(dir)).filter((f) => f.endsWith('Adapter.ts'));
+    assert.ok(adapters.length > 0, 'at least one adapter source must exist');
+    for (const file of adapters) {
+      const src = await fs.readFile(`${dir}/${file}`, 'utf8');
+      // The native engine reports exactly "file is not a database" for a
+      // non-database file; without this pattern the code was UNKNOWN and the UI
+      // showed raw English driver text.
+      assert.match(
+        src,
+        /lower\.includes\('not a database'\)/,
+        `${file}: that wording must map to DB_CORRUPT`
+      );
+    }
   });
 
   it('gives DB_CORRUPT a message key in both languages', async () => {

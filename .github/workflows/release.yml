@@ -7,30 +7,40 @@
 #
 # WHY PER-PLATFORM AT ALL
 # ----------------------
-# The extension's database engine is the NATIVE `@tursodatabase/database`
-# (Turso Database), which loads a platform-specific binary from one of its
-# `@tursodatabase/database-<platform>` optional dependencies. Only the binary for
-# the machine that runs `npm install` ends up in node_modules, so a single VSIX
-# cannot contain every platform's runtime. VS Code solves this with a `--target`
-# suffix: the Marketplace stores one VSIX per target under the same version, and
-# each user's VS Code downloads the one matching their OS/arch.
+# The extension's database engine is the NATIVE `better-sqlite3` (stock SQLite),
+# which compiles or loads a platform-specific binary.
 #
-# (A WASM client would avoid this, but the previously evaluated
+# UNLIKE the engine this replaced, `better-sqlite3` ships EVERY platform's
+# prebuilt binary inside the ONE package, under `prebuilds/<platform>-<arch>.node`
+# (win32-x64, win32-arm64, darwin-x64, darwin-arm64, linux-x64, linux-arm64,
+# linuxmusl-x64, linuxmusl-arm64). There are no per-platform optional
+# dependencies such as `@tursodatabase/database-<platform>`, and no npm
+# cross-install variables are involved: `lib/binding.js` resolves the right
+# binary from `process.platform` / `process.arch` at require time, with musl
+# detected separately on Linux. So the installed node_modules is identical on
+# every platform and a SINGLE untargeted VSIX would run anywhere.
+#
+# The per-target split is therefore no longer a packaging necessity — it is kept
+# so each published artifact advertises its platform and users get the right one
+# without the Marketplace guessing. VS Code stores one VSIX per target under the
+# same version, and each user's VS Code downloads the one matching their OS/arch.
+# `npm run package` also produces a single untargeted VSIX that works everywhere.
+#
+# (A WASM client would avoid all of this, but the previously evaluated
 # `@libsql/client-wasm` cannot open a database file — an absolute path fails
 # with SQLITE_CANTOPEN and a relative one silently becomes an in-memory DB — so
 # it is not an option.)
 #
-# The target list mirrors the platform packages `@tursodatabase/database`
-# declares as optional dependencies. Upstream ships EXACTLY FOUR:
-#   darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc
+# The target list is the extension's own advertised platform set. `better-sqlite3`
+# ships binaries for two of the excluded platforms as well (darwin-x64 and the
+# musl builds), so their exclusion is a product decision — the extension has
+# never advertised them and they are untested — NOT a missing binary.
 #
-# DELIBERATELY UNSUPPORTED — upstream publishes NO binary for these, so no VSIX
-# can be built for them and they must not appear in the matrix:
-#   - darwin-x64    (macOS on Intel: no `database-darwin-x64` package exists)
-#   - musl/Alpine   (`alpine-x64`, `alpine-arm64`: the Linux builds are
-#                    glibc-only, there is no musl package)
-#   - win32-arm64   (no arm64 Windows build)
-# If upstream ever adds a platform, add it here too.
+# DELIBERATELY UNSUPPORTED — do not add these to the matrix:
+#   - darwin-x64    (macOS on Intel)
+#   - musl/Alpine   (`linuxmusl-x64`, `linuxmusl-arm64`)
+#   - win32-arm64   (Windows on ARM)
+# If the extension ever starts advertising one of them, add it here too.
 name: Build platform VSIXs
 
 # MANUAL ONLY. There is deliberately no `push` or `pull_request` trigger: this
@@ -99,11 +109,12 @@ jobs:
           - os: windows-latest
             target: win32-x64
             vsce_target: win32-x64
-          # win32-arm64 is NOT built: `@tursodatabase/database` ships no arm64
-          # Windows binary, so an install would only ever fetch the x64 one.
+          # win32-arm64 is NOT built: `better-sqlite3` DOES ship a
+          # `prebuilds/win32-arm64` binary, but the extension has never
+          # advertised Windows on ARM and does not test it.
           # --- macOS: runner arch decides the binary -------------------------
-          # Only the Apple-silicon build exists upstream; there is no
-          # `database-darwin-x64`, so macOS Intel is unsupported.
+          # Only the Apple-silicon build is advertised. `prebuilds/darwin-x64`
+          # DOES exist, but macOS Intel has never been advertised or tested.
           - os: macos-latest
             target: darwin-arm64
             vsce_target: darwin-arm64
@@ -111,13 +122,13 @@ jobs:
           - os: ubuntu-latest
             target: linux-x64
             vsce_target: linux-x64
-          # A NATIVE arm64 runner, so no npm cross-install variables are needed:
-          # the install resolves `database-linux-arm64-gnu` on its own.
+          # A NATIVE arm64 runner, so node-gyp never has to cross-compile:
+          # `npm ci` on this runner resolves its own prebuild from the host.
           - os: ubuntu-24.04-arm
             target: linux-arm64
             vsce_target: linux-arm64
-          # Alpine (musl) is NOT built: the upstream Linux binaries are
-          # glibc-only, so there is no musl package to install.
+          # Alpine (musl) is NOT built: `prebuilds/linuxmusl-*` DOES exist, but
+          # the extension has never advertised musl and does not test it.
 
     steps:
       - uses: actions/checkout@v4
@@ -129,15 +140,16 @@ jobs:
           node-version: '22'
           # Caches only the npm DOWNLOAD cache (~/.npm), which is platform
           # independent. The installed node_modules is NOT cached, so each matrix
-          # entry installs its own platform's optional dependency below.
+          # entry installs the dependency tree fresh.
           cache: npm
 
-      # Install the dependency tree for THIS target.
+      # Install the dependency tree.
       #
-      # Each matrix entry runs on a runner whose OWN platform matches the target,
-      # so no cross-install variables are needed and none are set: npm resolves
-      # the right `@tursodatabase/database-<platform>` optional dependency from
-      # the host.
+      # `better-sqlite3` carries every platform's prebuilt binary in the one
+      # package, so nothing target-specific is installed here: each runner
+      # installs the same tree, and the binary that is actually loaded is picked
+      # from `prebuilds/` at require time. There are no per-platform optional
+      # dependencies to fetch and no cross-install variables to set.
       #
       # These variables are deliberately NOT set. They used to be wired to
       # `${{ matrix.npm_config_arch }}` and friends, but those matrix fields do
@@ -152,9 +164,6 @@ jobs:
       # process.platform / process.arch, which is exactly what is wanted here.
       #
       # `npm ci` is used (not `npm install`) so the lockfile is authoritative.
-      # The native packages are OPTIONAL dependencies, so npm silently skips the
-      # ones that do not match the requested platform — which is exactly why the
-      # smoke test below must confirm the right binary landed.
       - name: Install dependencies for ${{ matrix.target }}
         run: |
           npm ci
@@ -191,7 +200,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           mkdir -p "VSIX/$VERSION"
           # NOTE: do NOT pass --no-dependencies. That flag stops vsce from
-          # walking the dependency tree, so `node_modules/@tursodatabase/**`
+          # walking the dependency tree, so `node_modules/better-sqlite3/**`
           # never reaches the archive and the installed extension cannot load
           # its engine at all. `.vscodeignore` is what controls the contents.
           node node_modules/@vscode/vsce/vsce package \

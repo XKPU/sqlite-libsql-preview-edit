@@ -1,5 +1,6 @@
 <!--
-SPDX-FileCopyrightText: 2026 K_PU SPDX-License-Identifier: AGPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 K_PU
+SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 # 支持
@@ -23,7 +24,7 @@ SPDX-FileCopyrightText: 2026 K_PU SPDX-License-Identifier: AGPL-3.0-or-later
 
 ### 我的平台加载不了扩展
 
-仅 4 种架构随包提供预编译驱动二进制，见 README 的 [驱动](README.zh-cn.md#驱动)一节。
+仅支持 4 种架构，见 README 的 [驱动](README.zh-cn.md#驱动)一节。
 
 | 系统 | 架构 |
 | --- | --- |
@@ -31,7 +32,13 @@ SPDX-FileCopyrightText: 2026 K_PU SPDX-License-Identifier: AGPL-3.0-or-later
 | macOS | Apple 芯片（`arm64`） |
 | Linux | x64、`arm64`（glibc） |
 
-Intel macOS、Alpine/musl 以及 Windows `arm64` 不受支持：上游未为其发布二进制。
+Intel macOS、Alpine/musl 以及 Windows `arm64` 不受支持。内置引擎确实为它们提供了二进制，但本扩展从未宣称支持、也未测试过这些平台，因此不会为它们构建 VSIX。
+
+### 锁冲突：提示 "database is locked"
+
+引擎为原生 SQLite，采用 **normal** 锁模式，因此与其他进程协作而非排斥：其他程序打开数据库时仍可正常读写，WAL 与 rollback-journal 模式皆然。（此前的引擎以 `locking_mode = exclusive` 打开文件，即使在 WAL 下也会阻塞所有其他进程 —— 此问题已修复。）
+
+若其他程序正处于事务中，扩展只会短暂等待锁（250 毫秒），随后以明确的 `database is locked` 错误失败，而不会把没写成功的事情报成成功。等待更久并无帮助：若某服务一直持着未提交的事务，无论预算多大结果都相同，短等待只是免去你的卡顿。待对方进程结束后重试即可。只读模式（`libSqlPreviewEdit.readOnly`）则完全不会获取写锁。
 
 ### 提示 "Extension updated — reload the window to finish"
 
@@ -39,7 +46,7 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` 不受支持：上游未为其�
 
 ### 显示出的方言不对
 
-`.db`、`.sqlite`、`.sqlite3`、`.libsql`、`.turso` 均受支持。**驱动**始终是 Turso Database；**方言**表示文件内容，而非实际加载的实现。详见[驱动与方言](README.zh-cn.md#驱动与方言)。
+`.db`、`.sqlite`、`.sqlite3`、`.libsql`、`.turso` 均受支持。**驱动**始终是内置的原生 SQLite 引擎（`better-sqlite3`）；**方言**表示文件内容，而非实际加载的实现。详见[驱动与方言](README.zh-cn.md#驱动与方言)。
 
 ### 出错了，我需要详细日志
 

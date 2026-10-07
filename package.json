@@ -250,7 +250,7 @@
     "package:target": "npm run compile && node scripts/package-target.js"
   },
   "dependencies": {
-    "@tursodatabase/database": "^0.8.1"
+    "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

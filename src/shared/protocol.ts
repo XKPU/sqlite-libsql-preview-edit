@@ -144,25 +144,26 @@ export interface DatabaseInfo {
   /**
    * Name of the driver implementation running the queries. Distinct from
    * `engine`: the driver is the implementation, the engine is the dialect the
-   * file is written in. Always `turso` while Turso Database is the only driver.
+   * file is written in. Either `turso` or `better-sqlite3`.
    */
   driver: string;
   /**
    * The dialect the file is written in, inferred by detection. Defaults to
    * `sqlite`; `libsql` and `turso` are reported from the matching signals.
    *
-   * This is a *label*, not a dispatch switch: every file is served by the same
-   * Turso Database driver, so the value never selects an implementation and
-   * never turns a capability on or off. See `capabilities` below.
+   * This is a *label*: the dialect names how the file was written and drives
+   * what the UI calls it, but it does not by itself select an implementation.
+   * What is executable depends on `driver`, and that is reported separately in
+   * `capabilities`.
    */
   engine: DbEngine;
   /** How the dialect was determined, with the evidence that decided it. */
   detection: LibSqlDetection;
   /**
-   * Capabilities the bundled engine offers. Reported unconditionally from
-   * `TURSO_CAPABILITIES`, because Turso Database is a superset of SQLite and
-   * LibSQL and is the only engine that can run — the detected dialect does not
-   * change what is executable.
+   * Capabilities the running engine offers for this file. Resolved by
+   * `capabilitiesForDriver` from the driver and the detected dialect, so the
+   * set matches what the engine can actually execute — a statement advertised
+   * here is expected to run.
    */
   capabilities: LibSqlCapabilities;
 }
@@ -328,6 +329,39 @@ export const TURSO_CAPABILITIES: LibSqlCapabilities = {
     'vector_full_scan'
   ]
 };
+
+/**
+ * Capabilities the bundled SQL engine actually offers, given the dialect the
+ * file was detected as.
+ *
+ * `driver` decides which engine executes the queries, and the engine — not the
+ * dialect label — decides what is executable. Keeping the two separate matters:
+ * a `libsql` or `turso` file opened by the stock-SQLite driver is served by an
+ * engine that cannot run `CREATE SEQUENCE` or the `vector_*` functions, so
+ * reporting the Turso set for it would advertise statements that fail at run
+ * time.
+ *
+ * The mapping is therefore:
+ *   - `better-sqlite3` — always `SQLITE_CAPABILITIES`. The dialect is still
+ *     detected and still drives labels, but no dialect may turn a capability
+ *     on: binding the detected dialect instead would re-introduce exactly the
+ *     over-reporting this function exists to prevent.
+ *   - `turso` — the detected dialect's own set, because Turso Database is the
+ *     engine that implements them: `turso` files get `TURSO_CAPABILITIES`, and
+ *     `libsql` files opened by that engine get `LIBSQL_CAPABILITIES`.
+ *
+ * Anything unrecognised falls back to the SQLite baseline, so an unknown driver
+ * under-reports rather than promising statements it may not support.
+ */
+export function capabilitiesForDriver(
+  driver: string,
+  engine: DbEngine
+): LibSqlCapabilities {
+  if (driver !== 'turso') return SQLITE_CAPABILITIES;
+  if (engine === 'turso') return TURSO_CAPABILITIES;
+  if (engine === 'libsql') return LIBSQL_CAPABILITIES;
+  return SQLITE_CAPABILITIES;
+}
 
 /* ------------------------------------------------------------------------ */
 /* Webview configuration (mirror of the extension settings)                 */

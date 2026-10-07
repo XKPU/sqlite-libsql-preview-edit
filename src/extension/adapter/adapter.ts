@@ -19,9 +19,10 @@ import {
  * Abstraction over the SQL engine used by the extension.
  *
  * The extension talks to a database only through this interface. There is a
- * single implementation — the native LibSQL client (`libSqlAdapter.ts`) — which
- * covers both the LibSQL dialect and the plain SQLite baseline; the seam is
- * kept so host logic and the webview stay independent of that engine.
+ * single implementation — the native SQLite engine (`sqliteAdapter.ts`) — which
+ * covers the SQLite, LibSQL and Turso Database dialects alike, because all three
+ * share the on-disk container; the seam is kept so host logic and the webview
+ * stay independent of that engine.
  *
  * Every method is async and returns a discriminated result: either the payload
  * on success, or an `ErrorInfo` describing a structured failure. The host never

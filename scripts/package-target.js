@@ -3,12 +3,14 @@
 /**
  * Package a platform-targeted VSIX locally, the same way CI does it.
  *
- * A single VSIX cannot serve every OS/arch, because the native Turso Database
- * engine resolves a platform-specific binary
- * (`@tursodatabase/database-<platform>`) that only exists for the machine that
- * ran `npm install`. VS Code solves this with a target suffix: the Marketplace
- * keeps one VSIX per target under the same version, and each user's VS Code
- * downloads the matching one.
+ * A target suffix is no longer REQUIRED to produce a working artifact: the engine,
+ * `better-sqlite3`, ships every platform's prebuilt binary inside the one package
+ * (`prebuilds/<platform>-<arch>.node`), so a single untargeted VSIX loads on all of
+ * them. See `package-untargeted.js` for that build.
+ *
+ * This script still exists for the Marketplace flow, where one VSIX per target
+ * lets each user's VS Code download only the matching payload instead of every
+ * platform's binary, and it is what the CI matrix runs.
  *
  * Usage:
  *   node scripts/package-target.js <target> [more targets...]
@@ -19,11 +21,9 @@
  * the others, but the result could not load its engine, so they are rejected
  * here rather than producing a broken artifact.
  *
- * IMPORTANT: this only packages for the target NAME; it does not install that
- * target's native binary. Cross-building a platform therefore requires the
- * matching optional dependency to be present in node_modules first, which is
- * what the CI matrix does with npm's target-arch env vars. The script builds on
- * the current host only when the target matches the host.
+ * Unlike the optional-dependency engines of the past, no install step is needed
+ * per target: the prebuilds travel inside `better-sqlite3` itself, so this
+ * packages for any supported target from any host.
  */
 'use strict';
 const { execFileSync } = require('node:child_process');
@@ -37,12 +37,35 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
  * The targets this extension can actually ship.
  *
  * This is deliberately narrower than `vsce --target`'s list: it mirrors the
- * platform packages `@tursodatabase/database` publishes as optional
- * dependencies. Upstream provides no binary for win32-arm64, darwin-x64 or
- * musl/Alpine, so packaging those would produce a VSIX whose engine cannot
- * load. Keep this in sync with the CI matrix in .github/workflows/release.yml.
+ * prebuilt binaries `better-sqlite3` publishes under `prebuilds/`. See
+ * `packagedPrebuilds()` below, which reads that list from the installed engine
+ * rather than trusting this constant, so a package that ships an extra platform
+ * is noticed instead of silently ignored. Upstream also provides musl/Alpine
+ * binaries (`linuxmusl-*`) and win32-arm64, but the extension has never
+ * advertised those targets; keep this in sync with the CI matrix in
+ * .github/workflows/release.yml.
  */
 const SUPPORTED = ['win32-x64', 'darwin-arm64', 'linux-x64', 'linux-arm64'];
+
+/**
+ * The prebuilt binaries the installed engine actually carries.
+ *
+ * Read from disk so the set is discovered, not assumed: if an upgrade adds a
+ * platform, this reports it, and if the install is pruned so a platform is
+ * missing, packaging that target can be refused before producing a broken VSIX.
+ */
+function packagedPrebuilds() {
+  try {
+    const pkg = require.resolve('better-sqlite3/package.json', { paths: [root] });
+    const dir = path.join(path.dirname(pkg), 'prebuilds');
+    return fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.node'))
+      .map((f) => f.replace(/\.node$/, ''));
+  } catch {
+    return [];
+  }
+}
 
 const argv = process.argv.slice(2);
 

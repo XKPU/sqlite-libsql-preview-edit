@@ -12,9 +12,10 @@
  *
  * Checks:
  *   1. the archive carries no `node_modules` beyond the runtime packages
- *      that `.vscodeignore` deliberately re-includes (`@tursodatabase/**` and
- *      its `@tursodatabase/database-<platform>` binaries, required by
- *      `require('@tursodatabase/database')` at runtime) and no stray files
+ *      that `.vscodeignore` deliberately re-includes (`better-sqlite3`, required
+ *      by `require('better-sqlite3')` at runtime) and no stray files, and that
+ *      the engine's native `prebuilds/` binaries survived while its build-time
+ *      sources did not
  *   2. no removed WASM engine is shipped: neither the vendored `out/vendor`
  *      payload nor an `sql.js` module may appear in the archive
  *   3. the native adapter opens, creates, writes, reads, and closes a DB
@@ -92,13 +93,12 @@ console.log(`extracted with ${extractor}: ${vsix}\n  -> ${work}\n`);
 /* --------------------------- contents are clean -------------------------- */
 
 check('the archive carries no unexpected node_modules', () => {
-  // `@tursodatabase` — the Turso Database engine plus the platform-specific
-  // `@tursodatabase/database-<platform>` binary nested inside it — is
-  // re-included on purpose by `.vscodeignore`: the extension requires
-  // `@tursodatabase/database` at runtime. It is the ONLY runtime dependency, so
-  // any other module under `node_modules` means the package is shipping dev
-  // deps (or leftovers from the previous libSQL engine).
-  const ALLOWED = new Set(['@tursodatabase']);
+  // `better-sqlite3` — the SQLite engine, including every platform's prebuilt
+  // binary under its `prebuilds/` directory — is re-included on purpose by
+  // `.vscodeignore`: the extension requires `better-sqlite3` at runtime. It is
+  // the ONLY runtime dependency, so any other module under `node_modules` means
+  // the package is shipping dev deps (or leftovers from a previous engine).
+  const ALLOWED = new Set(['better-sqlite3']);
   const found = [];
   (function walk(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -111,7 +111,38 @@ check('the archive carries no unexpected node_modules', () => {
       }
     }
   })(ext);
-  assert.deepEqual(found, [], 'a VSIX may only ship the @tursodatabase runtime modules');
+  assert.deepEqual(found, [], 'a VSIX may only ship the better-sqlite3 runtime module');
+});
+
+check('the archive ships the engine native prebuilds', () => {
+  // The one thing a pruned `node_modules` can silently break. `better-sqlite3`
+  // resolves `prebuilds/<platform>-<arch>.node` at require time, and `.vscodeignore`
+  // excludes the package's build-time sources — so if the `prebuilds` re-include
+  // ever stops working, the VSIX still builds and every user gets a load failure.
+  // Assert the directory exists and holds at least one binary per platform.
+  const prebuilds = path.join(ext, 'node_modules/better-sqlite3/prebuilds');
+  assert.ok(fs.existsSync(prebuilds), 'node_modules/better-sqlite3/prebuilds missing');
+  const bins = fs.readdirSync(prebuilds).filter((f) => f.endsWith('.node'));
+  assert.ok(bins.length > 0, 'no .node prebuilt binaries shipped');
+  for (const required of ['win32-x64', 'darwin-arm64', 'linux-x64', 'linux-arm64']) {
+    assert.ok(
+      bins.includes(`${required}.node`),
+      `prebuild for ${required} is missing from the package (found: ${bins.join(', ')})`
+    );
+  }
+});
+
+check('the archive ships no engine build-time sources', () => {
+  // `deps/` (vendored SQLite C sources) and `src/` only exist so npm can compile
+  // from scratch; every supported platform ships a prebuild instead. Shipping them
+  // would add ~5.4 MB of dead weight, so the `.vscodeignore` excludes must hold.
+  for (const dir of ['deps', 'src']) {
+    const excluded = path.join(ext, 'node_modules/better-sqlite3', dir);
+    assert.ok(
+      !fs.existsSync(excluded),
+      `node_modules/better-sqlite3/${dir} must not be packaged (build-time only)`
+    );
+  }
 });
 
 check('the archive carries no stray database files', () => {
@@ -209,7 +240,7 @@ function runAdapterChecks() {
       results.open = open;
       return adapter.executeSql('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)');
     })
-    .then(() => adapter.executeSql("INSERT INTO t (name) VALUES ('turso')"))
+    .then(() => adapter.executeSql("INSERT INTO t (name) VALUES ('shipped')"))
     // Pages are 0-based here; the UI adds 1 only for display.
     .then(() => adapter.query('SELECT id, name FROM t', 0, 50))
     .then((q) => {
@@ -221,18 +252,22 @@ function runAdapterChecks() {
 
 runAdapterChecks()
   .then((results) => {
-    check('the Turso Database engine opens a new database', () => {
+    check('the native SQLite engine opens a new database', () => {
       assert.ok(results.open && !results.open.code, `open failed: ${JSON.stringify(results.open)}`);
       // Exact match, not just "non-empty": this is the assertion that would
       // catch the shipped build resolving a different engine than intended.
-      assert.equal(results.open.driver, 'turso', 'the Turso driver must be the one running queries');
+      assert.equal(
+        results.open.driver,
+        'better-sqlite3',
+        'the better-sqlite3 driver must be the one running queries'
+      );
     });
 
     check('a written row reads back', () => {
       const rows = results.query && results.query.rows;
       assert.ok(Array.isArray(rows), 'query did not return rows');
       assert.equal(rows.length, 1, `expected 1 row, got ${rows.length}`);
-      assert.equal(rows[0][1] ?? rows[0].name, 'turso');
+      assert.equal(rows[0][1] ?? rows[0].name, 'shipped');
     });
 
     check('an empty file is treated as a new, writable database', () => {
@@ -253,7 +288,7 @@ runAdapterChecks()
       const bytes = fs.readFileSync(path.join(work, 'clean-room.db'));
       assert.ok(bytes.length > 0, 'the file is still empty after a write');
       assert.ok(
-        bytes.includes(Buffer.from('turso', 'utf8')),
+        bytes.includes(Buffer.from('shipped', 'utf8')),
         'the inserted value is not present in the persisted file'
       );
     });
