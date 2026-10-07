@@ -14,6 +14,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 A VS Code extension for previewing and editing **SQLite / LibSQL / Turso** database files.
 
+> [!WARNING]
+> **Early development.** This project is at an early stage: it still has a fair number of rough edges, and its behaviour and configuration may change frequently. Please weigh that before relying on it.
+
 ## Contents
 
 - [Driver](#driver)

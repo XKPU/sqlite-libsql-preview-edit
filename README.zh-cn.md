@@ -14,6 +14,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 一个 VS Code 扩展，用于预览和编辑 **SQLite / LibSQL / Turso** 数据库文件。
 
+> [!WARNING]
+> **早期开发阶段。** 本项目尚处于早期阶段：问题较多，行为与配置的更新频率较快。请在依赖它之前斟酌使用。
+
 ## 目录
 
 - [驱动](#驱动)

@@ -4,7 +4,7 @@
   "name": "sqlite-libsql-preview-edit",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "U-EPTM",
   "license": "AGPL-3.0-or-later",
   "private": false,
