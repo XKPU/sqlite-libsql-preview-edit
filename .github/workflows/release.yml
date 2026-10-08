@@ -13,17 +13,18 @@
 # darwin-arm64, darwin-x64, win32-x64-msvc, linux-{x64,arm64}-gnu,
 # linux-{x64,arm64}-musl, linux-arm-{gnueabihf,musleabihf}).
 #
-# npm installs only the binary matching the HOST platform (optionalDependencies
-# honor os/cpu), so each runner gets its own target's binary automatically. One
-# VSIX is built per runner and ships exactly that binary — `scripts/
-# package-target.js` / `scripts/verify-vsix.js` enforce the one-binary layout.
-# (`vsce --target` alone does NOT prune the sibling `@libsql/*` packages —
-# measured on vsce 4.x — but on CI each runner only ever has its own binary
-# installed, so nothing else can leak into the archive. The local script prunes
-# explicitly because a dev machine may have installed several.)
+# npm installs every optionalDependency whose `os`/`cpu` match the HOST. On
+# Windows and macOS that is exactly one binary per runner — but on Linux BOTH
+# `@libsql/linux-<arch>-gnu` AND `-musl` match (their manifests differ only in
+# nothing npm checks; the glibc-vs-musl choice is made by the loader at require
+# time via `detect-libc`). So a Linux runner installs two binaries, and a plain
+# `vsce package` would ship both. Packaging therefore goes through
+# `scripts/package-target.js`, which prunes `node_modules/@libsql` down to the
+# one binary the target's VSIX may carry before invoking vsce (measured on
+# vsce 4.x: `--target` alone does NOT prune optionalDependencies).
 #
 # On Linux the loader remaps musl→gnu (`node_modules/libsql/index.js`), so the
-# gnu binaries also serve Alpine/musl users.
+# gnu binary alone also serves Alpine/musl users.
 #
 # DELIBERATELY UNSUPPORTED — do not add these to the matrix:
 #   - darwin-x64    (macOS on Intel): libsql DOES ship `@libsql/darwin-x64`, but
@@ -99,7 +100,6 @@ jobs:
           # --- Windows -------------------------------------------------------
           - os: windows-latest
             target: win32-x64
-            vsce_target: win32-x64
           # win32-arm64 is NOT built: libsql publishes no binary for it.
           # --- macOS: Apple Silicon ------------------------------------------
           # Only the Apple-silicon build is advertised. `@libsql/darwin-x64`
@@ -107,17 +107,16 @@ jobs:
           # tested; see SUPPORT.md for the self-packaging tutorial instead.
           - os: macos-latest
             target: darwin-arm64
-            vsce_target: darwin-arm64
           # --- Linux (glibc) -------------------------------------------------
+          # `target` is both the vsce --target value and the key into
+          # `package-target.js`'s TARGET_BINARY_PACKAGE map (@libsql/linux-x64-gnu).
           - os: ubuntu-latest
             target: linux-x64
-            vsce_target: linux-x64
           # A NATIVE arm64 runner, so nothing has to cross-compile: `npm ci` on
           # this runner resolves its own `@libsql/linux-arm64-gnu` binary from
           # the host.
           - os: ubuntu-24.04-arm
             target: linux-arm64
-            vsce_target: linux-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -134,8 +133,10 @@ jobs:
       # Install the dependency tree.
       #
       # libsql ships one binary package per platform as optionalDependencies, so
-      # npm installs ONLY the binary matching this runner — which is exactly the
-      # one this job's VSIX must carry. No cross-install variables are involved.
+      # npm installs every one whose os/cpu match this runner. On Windows and
+      # macOS that is exactly one binary; on Linux it is BOTH the -gnu and -musl
+      # package (see the header) — `package-target.js` prunes the extra one
+      # before packaging. No cross-install variables are involved.
       #
       # These npm_config_* variables are deliberately NOT set. They used to be
       # wired to `${{ matrix.npm_config_arch }}` and friends, but those matrix
@@ -201,10 +202,15 @@ jobs:
       - name: Smoke-test the native engine
         run: node scripts/smoke-native.js
 
-      # The local script also prunes sibling @libsql binaries; on CI each runner
-      # has only its own binary installed, so a plain vsce package is equivalent.
+      # Package through the SAME script the local flow uses. This matters on
+      # Linux: `npm ci` installs both the -gnu and -musl binary there, and a
+      # plain `vsce package` would ship both (verify-vsix.js fails with
+      # "exactly one @libsql binary must ship"). `package-target.js` stages the
+      # sibling binaries out of node_modules for the vsce run and restores them
+      # afterwards, so the archive carries exactly the target's binary.
+      #
       # Same output layout as `npm run package:target`: VSIX/<version>/.
-      - name: Package targeted VSIX (${{ matrix.vsce_target }})
+      - name: Package targeted VSIX (${{ matrix.target }})
         shell: bash
         run: |
           npm run compile
@@ -212,13 +218,12 @@ jobs:
           # manifest that vsce actually packaged.
           VERSION=$(node -p "require('./package.json').version")
           mkdir -p "VSIX/$VERSION"
-          # NOTE: do NOT pass --no-dependencies. That flag stops vsce from
-          # walking the dependency tree, so `node_modules/libsql/**` never
-          # reaches the archive and the installed extension cannot load its
-          # engine at all. `.vscodeignore` is what controls the contents.
-          node node_modules/@vscode/vsce/vsce package \
-            --target "${{ matrix.vsce_target }}" \
-            -o "VSIX/$VERSION/sqlite-libsql-preview-edit-${{ matrix.vsce_target }}.vsix"
+          # NOTE: do NOT pass --no-dependencies (the script does not use it
+          # either). That flag stops vsce from walking the dependency tree, so
+          # `node_modules/libsql/**` never reaches the archive and the installed
+          # extension cannot load its engine at all. `.vscodeignore` is what
+          # controls the contents.
+          node scripts/package-target.js "${{ matrix.target }}"
 
       - name: Show what was packaged
         shell: bash
@@ -228,7 +233,8 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          node scripts/verify-vsix.js "VSIX/$VERSION/sqlite-libsql-preview-edit-${{ matrix.vsce_target }}.vsix"
+          NAME=$(node -p "require('./package.json').name")
+          node scripts/verify-vsix.js "VSIX/$VERSION/$NAME-${{ matrix.target }}.vsix"
 
       # Plain `actions/upload-artifact`, one artifact per target, so the
       # maintainer can download exactly the platform(s) they need.
