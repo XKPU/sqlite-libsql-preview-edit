@@ -81,8 +81,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const panel = provider.activePanel();
       if (!panel) return;
       // Ask the open editor to switch to its SQL tab; the webview owns the
-      // editor UI, so the command only signals intent.
-      await panel.webview.postMessage({ id: 0, type: 'refreshRequested' });
+      // editor UI, so the command only signals intent. (This used to also post
+      // a `refreshRequested` first — a data reload is not what "open SQL
+      // editor" promises, and the double message made the editor flash.)
       await panel.webview.postMessage({ id: 0, type: 'showSql' });
     })
   );
@@ -123,8 +124,11 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 async function pickDatabaseFile(state: ExtensionState): Promise<vscode.Uri | undefined> {
+  // Must mirror the extensions registered for the custom editor in
+  // package.json (`customEditors[].selector`) — a file the editor can open but
+  // this picker cannot find is a dead end for the user.
   const files = await vscode.workspace.findFiles(
-    '**/*.{db,sqlite,sqlite3,libsql}',
+    '**/*.{db,db3,sqlite,sqlite3,libsql,turso}',
     '**/node_modules/**'
   );
   if (files.length === 0) {
@@ -132,7 +136,7 @@ async function pickDatabaseFile(state: ExtensionState): Promise<vscode.Uri | und
       canSelectMany: false,
       canSelectFiles: true,
       canSelectFolders: false,
-      filters: { Database: ['db', 'sqlite', 'sqlite3', 'libsql'] },
+      filters: { Database: ['db', 'db3', 'sqlite', 'sqlite3', 'libsql', 'turso'] },
       title: state.i18n.t('cmd.open')
     });
     if (!dialog || dialog.length === 0) return undefined;

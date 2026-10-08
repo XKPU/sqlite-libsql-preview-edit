@@ -107,8 +107,13 @@ describe('makeNonce', () => {
     assert.match(nonce, /^[A-Za-z0-9]{32}$/);
   });
 
-  it('is deterministic for a fixed random source', () => {
-    assert.equal(makeNonce(() => 0), 'A'.repeat(32));
+  it('is not deterministic across calls (cryptographic source)', () => {
+    // A crypto-backed nonce must not repeat across draws; drawing 8 nonces and
+    // requiring at least two distinct values makes a false failure essentially
+    // impossible while still catching a constant/seeded-PRNG regression.
+    const nonces = new Set<string>();
+    for (let i = 0; i < 8; i++) nonces.add(makeNonce());
+    assert.ok(nonces.size > 1, 'expected different nonces across draws');
   });
 
   it('produces different values across calls', () => {

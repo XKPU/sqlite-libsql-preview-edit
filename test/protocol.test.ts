@@ -135,7 +135,13 @@ describe('rowEditKey', () => {
   });
 
   it('joins composite keys in order', () => {
-    assert.equal(rowEditKey('t', ['a', 'b'], [1, 2]), 't|a,b|1,2');
+    // Components are length-prefixed (`len:value`) so a value containing the
+    // `|`/`,` separators cannot collide with a structural boundary.
+    assert.equal(rowEditKey('t', ['a', 'b'], [1, 2]), '1:t|3:a,b|1:1,1:2');
+  });
+
+  it('does not collide a NULL with the literal string "null"', () => {
+    assert.notEqual(rowEditKey('t', ['id'], [null]), rowEditKey('t', ['id'], ['null']));
   });
 
   it('renders null the same way every time', () => {

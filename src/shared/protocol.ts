@@ -352,6 +352,13 @@ export const TURSO_CAPABILITIES: LibSqlCapabilities = {
  *
  * Anything unrecognised falls back to the SQLite baseline, so an unknown driver
  * under-reports rather than promising statements it may not support.
+ *
+ * With the extension as shipped (only `better-sqlite3` is bundled) every file
+ * therefore gets the all-false baseline — this is deliberate, not a stub: the
+ * engine that executes the query cannot run `CREATE SEQUENCE` or `vector_*`,
+ * and enabling those flags for a dialect label alone made the UI advertise
+ * statements that fail at run time. The `driver === 'turso'` branch stays so
+ * the mapping is correct the moment the Turso engine is shipped.
  */
 export function capabilitiesForDriver(
   driver: string,
@@ -645,7 +652,6 @@ export type HostResponse =
   | { id: number; type: 'schema'; columns: ColumnInfo[]; sql: string }
   | { id: number; type: 'result'; result: QueryResult }
   | { id: number; type: 'error'; error: ErrorInfo }
-  | { id: number; type: 'progress'; phase: string; progress: number; detail?: string }
   | { id: number; type: 'saved'; changes: number }
   | { id: number; type: 'languageChanged'; language: Language; settings: WebviewSettings }
   | { id: number; type: 'exported'; filePath: string; sizeBytes: number; format: ExportFormat }
@@ -665,7 +671,6 @@ export type HostResponse =
   | { id: number; type: 'imported'; rows: number; skipped: number; tableName: string }
   | { id: number; type: 'objectDeleted'; name: string; objectType: ObjectType }
   | { id: number; type: 'closed' }
-  | { id: number; type: 'readOnly'; readOnly: boolean }
   | { id: number; type: 'refreshRequested' }
   | { id: number; type: 'showSql' }
   | { id: number; type: 'addObject' }
@@ -696,13 +701,20 @@ export function valueToString(v: SqlValue, nullDisplay = 'NULL', maxLen = 1000):
  * A stable key identifying one edited row, used to detect "is this row already
  * in the pending-edit list?".
  *
+ * Each component is length-prefixed (`len:value`), and NULL values are tagged
+ * distinctly from the string "null", so values containing `|` or `,` — or a
+ * NULL sitting next to a literal "null" string — cannot collide. Two rows that
+ * produce the same key are genuinely the same (table, columns, values) triple.
+ *
  * This existed as three byte-identical private copies — one in `DataTable` (as
  * `rowEditKeyStr`), one in `useDatabaseState`, and an exported one in
  * `useWebview` — so a change to the key format would have had to be made in
  * three places to stay consistent. It is pure and shared, so it lives here.
  */
 export function rowEditKey(table: string, keyColumns: string[], keyValues: SqlValue[]): string {
-  return table + '|' + keyColumns.join(',') + '|' + keyValues.map((v) => String(v)).join(',');
+  const part = (s: string): string => `${s.length}:${s}`;
+  const valuePart = (v: SqlValue): string => (v === null ? '\u0000null' : part(String(v)));
+  return [part(table), part(keyColumns.join(',')), keyValues.map(valuePart).join(',')].join('|');
 }
 
 export function valueToNumber(v: SqlValue): number | null {
@@ -820,7 +832,7 @@ export function quoteIdent(name: string): string {
 export function quoteLiteral(v: SqlValue): string {
   if (v === null) return 'NULL';
   if (typeof v === 'boolean') return v ? '1' : '0';
-  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(v);
+  if (typeof v === 'number') return String(v);
   if (v instanceof Uint8Array) return 'X' + "'" + bytesToHex(v) + "'";
   return "'" + v.replace(/'/g, "''") + "'";
 }

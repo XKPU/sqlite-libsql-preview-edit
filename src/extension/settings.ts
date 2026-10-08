@@ -41,12 +41,12 @@ export class ExtensionState {
   getWebviewSettings(): WebviewSettings {
     return {
       language: this.i18n.language,
-      pageSize: this.settings.get<number>('pageSize', 50) || 50,
+      pageSize: clampInt(this.settings.get<number>('pageSize', 50), 1, 10_000, 50),
       readOnly: this.settings.get<boolean>('readOnly', false) || false,
       readOnlyTables: this.settings.get<string[]>('readOnlyTables', []) ?? [],
       confirmDestructiveActions: this.settings.get<boolean>('confirmDestructiveActions', true) ?? true,
       nullDisplay: this.settings.get<string>('nullDisplay', 'NULL') ?? 'NULL',
-      maxCellLength: this.settings.get<number>('maxCellLength', 1000) ?? 1000,
+      maxCellLength: clampInt(this.settings.get<number>('maxCellLength', 1000), 1, 1_000_000, 1000),
       exportEncoding: (this.settings.get<string>('exportEncoding', 'utf8') as WebviewSettings['exportEncoding']) || 'utf8'
     };
   }
@@ -83,7 +83,7 @@ export class ExtensionState {
 
   /** Read the pageSize setting. */
   get pageSize(): number {
-    return this.settings.get<number>('pageSize', 50) || 50;
+    return clampInt(this.settings.get<number>('pageSize', 50), 1, 10_000, 50);
   }
 
   /** Read the readOnly setting. */
@@ -103,6 +103,20 @@ export class ExtensionState {
 
   /** Read the maxCellLength setting. */
   get maxCellLength(): number {
-    return this.settings.get<number>('maxCellLength', 1000) ?? 1000;
+    return clampInt(this.settings.get<number>('maxCellLength', 1000), 1, 1_000_000, 1000);
   }
+}
+
+/**
+ * Coerce a user-entered setting to a usable integer.
+ *
+ * `value || fallback` treated an explicit 0 as "unset" and silently changed it
+ * to the default, and out-of-range values (the manifest `minimum` only guards
+ * the settings UI, not a hand-edited settings.json) reached the webview
+ * unclamped. NaN, non-finite and non-number inputs all get the fallback.
+ */
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
 }

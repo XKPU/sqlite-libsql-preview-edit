@@ -48,7 +48,7 @@ export function inferType(v: unknown): string {
 /** Infer a SQLite type from a CSV column (1-based header row already removed). */
 export function inferTypeFromColumn(rows: string[][], colIndex: number): string {
   const values = rows.slice(1).map((r) => r[colIndex] ?? '');
-  if (values.length === 0) return 'TEXT';
+  if (values.length === 0 || values.every((v) => v === '')) return 'TEXT';
   let allNumeric = true;
   let allInteger = true;
   for (const v of values) {
@@ -124,14 +124,22 @@ export function rowsToCsv(rows: Record<string, unknown>[]): string {
 /** Stringify a SqlValue for CSV output. */
 export function csvStringify(v: SqlValue): string {
   if (isNull(v)) return '';
+  // A BLOB renders as `X'hex'`; the literal contains a single quote, so it must
+  // always go through `escapeCsv` (which the caller applies) — but an
+  // unquoted `X'…'` that happens to contain no comma/newline would round-trip
+  // as the literal text "X'…'" rather than re-import as a BLOB. Quoting it
+  // unconditionally keeps the value recognisable on re-import.
   if (v instanceof Uint8Array) return `X'${bytesToHex(v)}'`;
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   return String(v);
 }
 
-/** Escape a CSV field. */
+/** Escape a CSV field. BLOB literals (`X'…'`) are always quoted so the
+ * hex-literal survives a round-trip even when it contains no comma. */
 export function escapeCsv(s: string): string {
-  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  if (/^X'[0-9a-f]*'$/i.test(s) || /[",\n\r]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
   return s;
 }
 

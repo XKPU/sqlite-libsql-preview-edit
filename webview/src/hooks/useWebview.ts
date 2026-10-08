@@ -6,6 +6,7 @@ import type {
   ErrorInfo,
   HostResponse,
   Language,
+  SqlValue,
   WebviewSettings
 } from '../../../src/shared/protocol';
 import { PROTOCOL_VERSION } from '../../../src/shared/protocol';
@@ -98,8 +99,7 @@ export interface WebviewBridge {
     sql: string;
     page: number;
     pageSize: number;
-    orderBy?: string;
-    where?: string;
+    params?: SqlValue[];
   }) => Promise<ResponseResult>;
   /**
    * Native open dialog on the host for choosing an import file. Resolves to
@@ -151,8 +151,7 @@ export function useWebview(): WebviewBridge & {
     sql: string;
     page: number;
     pageSize: number;
-    orderBy?: string;
-    where?: string;
+    params?: SqlValue[];
   }) => Promise<ResponseResult>;
 } {
   const vscodeApi = useRef<VsCodeApiLike | null>(null);
@@ -326,7 +325,7 @@ export function useWebview(): WebviewBridge & {
     [send]
   );
   const query = useCallback(
-    (opts: { sql: string; page: number; pageSize: number; orderBy?: string; where?: string }) =>
+    (opts: { sql: string; page: number; pageSize: number; params?: SqlValue[] }) =>
       send({ type: 'query', ...opts }),
     [send]
   );

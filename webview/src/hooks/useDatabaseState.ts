@@ -301,9 +301,6 @@ export function useDatabaseState(): DatabaseState {
   useEffect(() => {
     const handler: HostMessageHandler = (msg) => {
       switch (msg.type) {
-        case 'progress':
-          setProgress({ phase: msg.phase, progress: msg.progress, detail: msg.detail });
-          break;
         case 'log':
           addToast(msg.level === 'error' ? 'error' : msg.level === 'warn' ? 'warning' : 'info', msg.message);
           break;
@@ -319,9 +316,6 @@ export function useDatabaseState(): DatabaseState {
           break;
         case 'languageChanged':
           setReadOnly(msg.settings.readOnly);
-          break;
-        case 'readOnly':
-          setReadOnly(msg.readOnly);
           break;
         /**
          * The host asks for the new-table dialog — either because the user ran

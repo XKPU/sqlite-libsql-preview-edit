@@ -15,6 +15,8 @@
  * test suite.
  */
 
+import { randomBytes } from 'crypto';
+
 export interface RewriteOptions {
   /** Map a bundle-relative reference onto a webview-loadable URL. */
   toWebviewUri: (assetRef: string) => string;
@@ -75,12 +77,29 @@ export function rewriteWebviewHtml(html: string, opts: RewriteOptions): string {
   return out;
 }
 
+const ALLOWED_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+function randomInts(count: number): number[] {
+  const bytes = randomBytes(count);
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    // 256 % 62 = 8, so a raw modulo has a small modulo bias (~3%). Rejection
+    // sampling removes it: values >= 248 are discarded and re-drawn.
+    let b = bytes[i] ?? 0;
+    while (b >= 256 - (256 % ALLOWED_ALPHABET.length)) {
+      b = randomBytes(1)[0] ?? 0;
+    }
+    out.push(b % ALLOWED_ALPHABET.length);
+  }
+  return out;
+}
+
 /** A fresh unpredictable nonce for the per-load content security policy. */
-export function makeNonce(random: () => number = Math.random): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+export function makeNonce(): string {
+  const picks = randomInts(32);
   let out = '';
-  for (let i = 0; i < 32; i++) {
-    out += alphabet.charAt(Math.floor(random() * alphabet.length));
+  for (const pick of picks) {
+    out += ALLOWED_ALPHABET.charAt(pick);
   }
   return out;
 }

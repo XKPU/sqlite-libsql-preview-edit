@@ -57,6 +57,24 @@
   修复导出/导入对话框用错面板的工作目录 — 现感知所属面板，优先使用发送方面板的文档目录
 - Fixed `getObjects` failures silently producing an empty tree — errors are now reported to the webview so the problem is visible instead of appearing as an empty database\
   修复 `getObjects` 失败时静默展示空树 — 错误现上报至 Webview，不再误显为“空库”
+- Replaced `Math.random`-based nonce generation with `crypto.randomBytes` plus rejection sampling to eliminate modulo bias in the webview HTML CSP nonce\
+  将 Webview HTML CSP nonce 生成从 `Math.random` 替换为 `crypto.randomBytes` + 拒绝采样，消除模偏差
+- Simplified `quoteLiteral` by removing a dead ternary in the numeric branch (the expression always took the same path)\
+  简化 `quoteLiteral`，移除数字分支中的死三元表达式
+- Fixed `rowEditKey` collisions — `null` and the string `"null"` previously produced the same key; now uses length-prefix encoding with a `\u0000null` tag\
+  修复 `rowEditKey` 冲突 — `null` 与字符串 `"null"` 此前生成相同 key，现改用长度前缀编码 + `\u0000null` 标签
+- Removed dead protocol fields (`progress`/`readOnly` in responses, `orderBy?`/`where?` in query requests) from both the shared protocol and webview handler\
+  从共享协议和 Webview handler 中移除死字段（响应中的 `progress`/`readOnly`、query 请求中的 `orderBy?`/`where?`）
+- Aligned `@types/vscode` to `^1.101.0` to match the `engines` field, resolving the type version mismatch\
+  将 `@types/vscode` 对齐至 `^1.101.0` 以匹配 `engines` 字段，解决类型版本不匹配
+- Fixed all-empty columns being inferred as `INTEGER` — they are now inferred as `TEXT`; also fixed CSV BLOB literals (`X'hex'`) missing quotes so they now round-trip correctly\
+  修复全空列被推断为 `INTEGER` — 现推断为 `TEXT`；同时修复 CSV BLOB 字面量（`X'hex'`）缺引号，现可正确往返
+- Added `.db3` and `.turso` to the file-search glob, dialog filters, and `package.json` selector so these extensions are recognized when opening databases\
+  在文件搜索 glob、对话框过滤器和 `package.json` 选择器中补全 `.db3` 和 `.turso` 扩展名
+- Fixed the SQL editor sending an unnecessary `refreshRequested` message on open — now only sends `showSql`\
+  修复打开 SQL 编辑器时额外发送 `refreshRequested` 消息 — 现仅发送 `showSql`
+- Added `clampInt()` to the settings module so `pageSize` (1–10,000) and `maxCellLength` (1–1M) are clamped to valid ranges, and `NaN`/non-numeric values fall back to defaults instead of silently accepting garbage\
+  在设置模块中新增 `clampInt()`，将 `pageSize`（1–10,000）和 `maxCellLength`（1–1M）钳制到有效范围，`NaN`/非数字值回退默认值，不再静默接受无效输入
 
 ### Changed
 
