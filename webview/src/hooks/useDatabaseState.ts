@@ -450,7 +450,11 @@ export function useDatabaseState(): DatabaseState {
       setLoading(true);
       let sql = buildTableSql(currentTable, columns);
       const where = buildWhere(filters, search, columns);
-      if (where) sql += ` WHERE ${where}`;
+      const params: SqlValue[] = [];
+      if (where) {
+        sql += ` WHERE ${where.clause}`;
+        params.push(...where.params);
+      }
       if (sort.column) {
         sql += ` ORDER BY ${quoteIdent(sort.column)} ${sort.dir === 'asc' ? 'ASC' : 'DESC'}`;
       }
@@ -458,7 +462,8 @@ export function useDatabaseState(): DatabaseState {
         type: 'query',
         sql,
         page: page.page,
-        pageSize: page.pageSize
+        pageSize: page.pageSize,
+        params
       });
       if (!res.ok) {
         addToast('error', describeError(res.error));
@@ -1187,21 +1192,28 @@ function buildWhere(
   filters: Record<string, string>,
   search: string,
   columns: ColumnInfo[]
-): string | undefined {
+): { clause: string; params: SqlValue[] } | undefined {
   const clauses: string[] = [];
+  const params: SqlValue[] = [];
   if (columns.length === 0) return undefined;
   for (const [col, val] of Object.entries(filters)) {
     if (!val) continue;
-    clauses.push(`${quoteIdent(col)} LIKE '%${escapeLike(val)}%'`);
+    // Values are bound as parameters, never interpolated. Interpolation was an
+    // injection hole: `escapeLike` escapes LIKE wildcards but a single quote in
+    // the value used to break out of the `'%…%'` literal. LIKE wildcard
+    // escaping stays client-side because it is matching semantics, not safety.
+    clauses.push(`${quoteIdent(col)} LIKE '%' || ? || '%' ESCAPE '\\'`);
+    params.push(escapeLike(val));
   }
   if (search) {
     const escaped = escapeLike(search);
     for (const c of columns) {
       if (c.hidden) continue;
-      clauses.push(`${quoteIdent(c.name)} LIKE '%${escaped}%'`);
+      clauses.push(`${quoteIdent(c.name)} LIKE '%' || ? || '%' ESCAPE '\\'`);
+      params.push(escaped);
     }
   }
-  return clauses.length === 0 ? undefined : clauses.join(' OR ');
+  return clauses.length === 0 ? undefined : { clause: clauses.join(' OR '), params };
 }
 
 function escapeLike(s: string): string {

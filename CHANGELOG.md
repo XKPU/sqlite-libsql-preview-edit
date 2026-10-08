@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Added
+
+- Enforced `readOnly` setting at the connection level — when enabled, SQLite opens the database with the `readonly` flag, so the engine itself blocks any write attempt at the lowest level\
+  连接层强制 `readOnly` 设置 — 启用时 SQLite 以 `readonly` 标志打开数据库，引擎本身在最低层阻止任何写入企图
+- Enforced `readOnlyTables` setting at the message-routing level — write operations targeting protected tables are rejected before reaching the adapter; for free-form SQL from the editor, the connection-level read-only flag serves as the hard guarantee\
+  消息路由层强制 `readOnlyTables` 设置 — 针对受保护表的写入操作在进入适配器前即被拒绝；编辑器自由 SQL 则由连接级只读标志作为硬保证
+- Enforced `readOnly` for all write messages (`commitEdits`, `insertRow`, `deleteRows`, `executeStatements`, `importCommit`, `executeDdl`, `deleteObject`) at the adapter level via a unified guard, returning a clear permission error instead of a raw `SQLITE_READONLY`\
+  适配器层通过统一守卫对所有写消息实施 `readOnly` 检查，返回明确的权限错误而非原始 `SQLITE_READONLY`
+
+### Fixed
+
+- Fixed an issue where `deleteRows` with an empty primary key silently deleted the entire table — it now returns a clear error\
+  修复 `deleteRows` 在空主键时静默删除整张表的问题 — 现返回明确错误
+- Fixed SQL injection via filter and search in the webview — filter values and search terms are now sent as bound parameters rather than interpolated into the SQL string\
+  修复 Webview 中过滤和搜索的 SQL 注入 — 过滤值与搜索词现以绑定参数发送，不再拼接入 SQL 字符串
+- Fixed `LIKE` escape declarations — `ESCAPE '\'` is now properly declared so that escaped wildcards (`\%`, `\_`) are treated literally\
+  修复 `LIKE` 转义声明 — 现正确声明 `ESCAPE '\'`，使转义后的通配符（`\%`、`\_`）按字面量处理
+- Fixed `query()` failing on statements with multiple trailing semicolons (e.g. `SELECT 1;;`)\
+  修复 `query()` 在多个尾随分号时失败的问题（如 `SELECT 1;;`）
+
+### Changed
+
+- Updated the `clearCache` command label to accurately describe its behavior (clears the read-only table list) and added a toast notification on completion\
+  更新 `clearCache` 命令标签以准确描述其行为（清空只读表列表），并在完成时弹出提示
+
 ---
 
 ## [v0.0.5] - 2026-10-07

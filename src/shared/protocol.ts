@@ -485,6 +485,16 @@ export type HostRequest =
       sql: string;
       page: number;
       pageSize: number;
+      /**
+       * Positional bind parameters for `?` placeholders in `sql`, in order.
+       *
+       * Filter and search values are bound, never interpolated: a filter value
+       * containing a quote used to break out of the `LIKE '%…%'` literal and
+       * inject arbitrary SQL. LIKE wildcards (`%`, `_`, `\`) are still escaped
+       * client-side by `escapeLike` — that is about matching semantics, not
+       * safety.
+       */
+      params?: SqlValue[];
       /** Optional ORDER BY override supplied by the webview. */
       orderBy?: string;
       /** Optional WHERE filter the webview has composed. */

@@ -282,6 +282,29 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
       });
     }
 
+    // Host-side enforcement of `libSqlPreviewEdit.readOnlyTables`.
+    //
+    // The webview hides the edit affordances for protected tables, but that is
+    // presentation. A request that names a protected table is refused here
+    // before it reaches the adapter, so a buggy or tampered webview cannot
+    // write either. (Global `readOnly` is enforced one layer deeper — the
+    // connection itself is opened read-only.) This is best-effort for free-form
+    // SQL: per-table protection can only match tables the request names
+    // explicitly, so `executeSql`/`executeStatements`/`executeDdl` are guarded
+    // by the connection-level flag only.
+    const writeTables = this.writeMessageTables(msg);
+    if (writeTables) {
+      const protectedTables = this.state.settings.getWebviewSettings().readOnlyTables;
+      const hit = writeTables.filter((t) => protectedTables.includes(t));
+      if (hit.length > 0) {
+        this.logger.warn(`write refused by readOnlyTables: ${hit.join(', ')}`);
+        return error({
+          code: 'PERMISSION',
+          message: `"${hit[0]}" is protected by libSqlPreviewEdit.readOnlyTables and cannot be modified.`
+        });
+      }
+    }
+
     try {
       switch (msg.type) {
         case 'init':
@@ -339,7 +362,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
           return;
         case 'query':
           await answer(
-            () => adapter.query(msg.sql, msg.page, msg.pageSize),
+            () => adapter.query(msg.sql, msg.page, msg.pageSize, msg.params ?? []),
             (result) => ({ id: msg.id, type: 'result', result })
           );
           return;
@@ -555,6 +578,34 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
   }
 
   /**
+   * Table names a write request would touch, or `null` for non-write requests.
+   *
+   * Used by the `readOnlyTables` gate in `handleMessage`: only requests that
+   * name their target table explicitly can be checked per-table. Free-form SQL
+   * (`executeSql`, `executeStatements`, `executeDdl`) has no reliable table
+   * list without an SQL parser, so those are NOT listed here — they are
+   * enforced at the connection level by the global `readOnly` setting instead.
+   */
+  private writeMessageTables(msg: HostRequest): string[] | null {
+    switch (msg.type) {
+      case 'commitEdits':
+        return [...new Set(msg.edits.map((e) => e.key.table))];
+      case 'insertRow':
+        return [msg.table];
+      case 'deleteRows':
+        return [...new Set(msg.keys.map((k) => k.table))];
+      case 'duplicateRow':
+        return [msg.key.table];
+      case 'importCommit':
+        return [msg.options.tableName];
+      case 'deleteObject':
+        return msg.objectType === 'table' ? [msg.name] : null;
+      default:
+        return null;
+    }
+  }
+
+  /**
    * Ask the user where an export should be written.
    *
    * Exports used to be saved into a private temporary directory and the path
@@ -621,7 +672,9 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
    */
   private async openAndReport(session: Session, uri: vscode.Uri): Promise<void> {
     this.logger.info(`opening database: ${uri.fsPath}`);
-    const r = await session.adapter.open(uri.fsPath);
+    // The user's read-only setting is enforced by the connection itself (the
+    // adapter opens with the engine's `readonly` flag), not just in the UI.
+    const r = await session.adapter.open(uri.fsPath, { readOnly: this.state.settings.readOnly });
     if (isError(r)) {
       this.logger.error(`open failed (${r.code}): ${r.message}`);
       // Remember the cause: the webview is very likely not listening yet (see

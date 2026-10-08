@@ -93,6 +93,8 @@ interface SqliteStatement {
   get(...params: unknown[]): unknown;
   /** Run a query and return every row. */
   all(...params: unknown[]): unknown[];
+  /** Bind positional parameters before a later `all()`/`get()`. */
+  bind(...params: unknown[]): SqliteStatement;
   /** Run a query, returning a row iterator. */
   iterate(...params: unknown[]): IterableIterator<unknown>;
   /**
@@ -425,11 +427,29 @@ export class SqliteAdapter implements DatabaseAdapter {
   /** One per adapter: a connection hosts one transaction at a time. */
   private readonly mutex = new Mutex();
 
-  async open(filePath: string): Promise<DatabaseInfo | ErrorInfo> {
+  async open(filePath: string, options?: { readOnly?: boolean }): Promise<DatabaseInfo | ErrorInfo> {
+    // A previously open file must be released before its handle is overwritten,
+    // otherwise every reopen to a different file leaks one native connection
+    // (and its file descriptor) for the lifetime of the panel.
+    if (this.db) {
+      try {
+        this.close();
+      } catch {
+        // The new open below reports its own failure; a stale handle that
+        // refuses to close must not mask that verdict.
+      }
+      this.db = null;
+    }
     this.dbPath = filePath;
     this.detection = null;
     this.openError = null;
     this.readOnlyFallback = false;
+    // The user's read-only setting is enforced at the connection level: the
+    // engine itself refuses every mutation, so no code path (not even a
+    // malicious or buggy webview message) can write. This flag also tells the
+    // UI "you asked for read-only" as distinct from a locked file.
+    const userReadOnly = options?.readOnly === true;
+    this.readOnlyFlag = userReadOnly;
 
     try {
       const stats = await fs.promises.stat(filePath);
@@ -451,8 +471,10 @@ export class SqliteAdapter implements DatabaseAdapter {
     try {
       let db: SqliteDatabase;
       try {
-        // Read-write stays the default: an editor must be able to save.
-        db = new (getSqlite())(filePath, { timeout: LOCK_TIMEOUT_MS });
+        // Read-write stays the default: an editor must be able to save. When the
+        // user asked for read-only, the engine-level `readonly` flag makes the
+        // whole connection incapable of writing, which is the hard guarantee.
+        db = new (getSqlite())(filePath, { timeout: LOCK_TIMEOUT_MS, readonly: userReadOnly });
       } catch (e) {
         // Opening read-write can fail for two very different reasons, and only
         // one of them is recoverable here:
@@ -467,7 +489,7 @@ export class SqliteAdapter implements DatabaseAdapter {
         //
         // Anything else (corrupt file, missing directory) is rethrown: a
         // read-only retry cannot help and would only hide the real cause.
-        if (!isWritableOpenFailure(e)) throw e;
+        if (!isWritableOpenFailure(e) || userReadOnly) throw e;
         db = new (getSqlite())(filePath, { readonly: true, timeout: LOCK_TIMEOUT_MS });
         this.readOnlyFallback = true;
       }
@@ -681,20 +703,25 @@ export class SqliteAdapter implements DatabaseAdapter {
 
   /* ------------------------------ query --------------------------------- */
 
-  async query(sql: string, page: number, pageSize: number): Promise<QueryResult | ErrorInfo> {
+  async query(sql: string, page: number, pageSize: number, params: SqlValue[] = []): Promise<QueryResult | ErrorInfo> {
     if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
     const start = Date.now();
     try {
-      const trimmed = sql.trim().replace(/;\s*$/, '');
-      const isSelect = /^(select|pragma|with)\b/i.test(trimmed);
-      if (!isSelect) {
-        const prepared = this.prepare(trimmed);
+      const trimmed = sql.trim().replace(/(;\s*)+$/, '');
+      // Classify by the engine, not by regex: `stmt.reader` is authoritative for
+      // whether a statement returns rows. A regex cannot be trusted here —
+      // `WITH … INSERT` starts like a SELECT but mutates, and a regex misfile
+      // used to wrap such a statement in a count subquery (a syntax error) and
+      // then execute the write a second time for the page fetch.
+      const prepared = this.prepare(trimmed);
+      if (!prepared.reader) {
+        // A write reaching the query path (SQL editor) must pass the same
+        // read-only guard as every other mutating entry point.
+        const guard = this.writeGuard();
+        if (guard) return guard;
         // A non-reader statement cannot be `.all()`ed; `run` reports the count.
-        const res = prepared.reader ? prepared.all() : prepared.run();
-        const affectedRows =
-          typeof (res as { changes?: number }).changes === 'number'
-            ? (res as { changes: number }).changes
-            : 0;
+        const res = prepared.run(...bindAll(params));
+        const affectedRows = typeof res.changes === 'number' ? res.changes : 0;
         return {
           columns: [],
           rows: [],
@@ -707,13 +734,15 @@ export class SqliteAdapter implements DatabaseAdapter {
       }
 
       // The count is a full second pass over the query. It is what drives the
-      // webview's "showing N of M" pager, so it is kept as-is.
-      const countRow = this.prepare(`SELECT count(*) AS c FROM (${trimmed}) AS t;`).get();
+      // webview's "showing N of M" pager, so it is kept as-is. Bound filter
+      // values apply to both passes.
+      const countRow = this.prepare(`SELECT count(*) AS c FROM (${trimmed}) AS t;`).get(...bindAll(params));
       const totalRows = Number((countRow as Record<string, unknown> | undefined)?.c ?? 0);
 
       const limit = Math.max(1, pageSize);
       const offset = Math.max(0, page * pageSize);
       const statement = this.prepareForRead(`${trimmed} LIMIT ${limit} OFFSET ${offset}`);
+      statement.bind(...bindAll(params));
       const columns = statement.columns().map((c) => ({ name: c.name, type: '' }));
       const names = columns.map((c) => c.name);
       const rawRows = statement.all() as Record<string, unknown>[];
@@ -742,8 +771,35 @@ export class SqliteAdapter implements DatabaseAdapter {
 
   /* ------------------------------ edits ---------------------------------- */
 
-  async commitEdits(edits: RowEdit[]): Promise<{ changes: number } | ErrorInfo> {
+  /**
+   * Host-side guard for every mutating operation.
+   *
+   * The webview's UI gating is a convenience, never the enforcement: any code
+   * path that reaches the adapter must be refused here when the user (or the
+   * open fallback) made this connection read-only. When the connection itself
+   * was opened `readonly` the engine also refuses, but an explicit verdict with
+   * a clear message beats a raw SQLITE_READONLY error.
+   */
+  private writeGuard(): ErrorInfo | null {
     if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    if (this.readOnlyFlag) {
+      return {
+        code: 'PERMISSION',
+        message: 'The database is open in read-only mode (libSqlPreviewEdit.readOnly). Disable the setting to edit.'
+      };
+    }
+    if (this.readOnlyFallback) {
+      return {
+        code: 'PERMISSION',
+        message: 'The database file could only be opened read-only (locked or not writable), so edits are disabled.'
+      };
+    }
+    return null;
+  }
+
+  async commitEdits(edits: RowEdit[]): Promise<{ changes: number } | ErrorInfo> {
+    const guard = this.writeGuard();
+    if (guard) return guard;
     if (edits.length === 0) return { changes: 0 };
     return this.mutex.runSync(() => {
       try {
@@ -769,7 +825,8 @@ export class SqliteAdapter implements DatabaseAdapter {
     table: string,
     values: Record<string, SqlValue>
   ): Promise<{ key: { columns: string[]; values: SqlValue[] } } | ErrorInfo> {
-    if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    const guard = this.writeGuard();
+    if (guard) return guard;
     const columns = Object.keys(values);
     if (columns.length === 0) {
       return { code: 'SQL_ERROR', message: 'Cannot insert a row with no columns.' };
@@ -805,16 +862,25 @@ export class SqliteAdapter implements DatabaseAdapter {
   }
 
   async deleteRows(keys: { table: string; keyColumns: string[]; keyValues: SqlValue[] }[]): Promise<{ changes: number } | ErrorInfo> {
-    if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    const guard = this.writeGuard();
+    if (guard) return guard;
+    // A keyless delete is `DELETE FROM table;` — one stray edit action would
+    // wipe an entire table. Refuse it: a row is only deletable when it carries
+    // the key that identifies it.
+    const keyless = keys.filter((k) => k.keyColumns.length === 0);
+    if (keyless.length > 0) {
+      const names = [...new Set(keyless.map((k) => `"${k.table}"`))].join(', ');
+      return {
+        code: 'SQL_ERROR',
+        message:
+          `Cannot delete from ${names}: the row has no primary key and no rowid, ` +
+          'so a delete could not be limited to a single row.'
+      };
+    }
     try {
       const changes = this.inTransaction((tx) => {
         let n = 0;
         for (const k of keys) {
-          if (k.keyColumns.length === 0) {
-            tx.prepare(`DELETE FROM ${quoteIdent(k.table)};`).run();
-            n += 1;
-            continue;
-          }
           const where = k.keyColumns.map((c) => `${quoteIdent(c)} = ?`).join(' AND ');
           tx.prepare(`DELETE FROM ${quoteIdent(k.table)} WHERE ${where};`).run(...bindAll(k.keyValues));
           n += 1;
@@ -832,7 +898,8 @@ export class SqliteAdapter implements DatabaseAdapter {
     keyColumns: string[],
     keyValues: SqlValue[]
   ): Promise<{ key: { columns: string[]; values: SqlValue[] } } | ErrorInfo> {
-    if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    const guard = this.writeGuard();
+    if (guard) return guard;
     const schema = await this.getSchema(table);
     if (isErrorInfo(schema)) return schema;
     const nonPkCols = schema.columns.filter((c) => !c.pk);
@@ -856,7 +923,8 @@ export class SqliteAdapter implements DatabaseAdapter {
   }
 
   async executeStatements(statements: string[]): Promise<{ statements: number; affectedRows: number } | ErrorInfo> {
-    if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    const guard = this.writeGuard();
+    if (guard) return guard;
     try {
       return this.inTransaction((tx) => {
         let count = 0;
@@ -892,7 +960,8 @@ export class SqliteAdapter implements DatabaseAdapter {
   }
 
   async deleteObject(name: string, type: ObjectType): Promise<{ ok: true } | ErrorInfo> {
-    if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    const guard = this.writeGuard();
+    if (guard) return guard;
     if (type === 'system') return { code: 'PERMISSION', message: 'Cannot delete system objects.' };
     if (isInternalObject(name)) {
       // Refuse outright rather than emit `DROP TABLE IF EXISTS sqlite_sequence`:
@@ -956,21 +1025,36 @@ export class SqliteAdapter implements DatabaseAdapter {
       const objects = await this.getObjects(true);
       if (isErrorInfo(objects)) return objects;
       if (format === 'sql') {
+        // Order matters for re-importability. `getObjects` returns alphabetical
+        // order, which puts CREATE INDEX before CREATE TABLE and makes the dump
+        // fail on import. Tables must exist before their indexes, triggers and
+        // views, and data must load with foreign keys off before the
+        // constraints are re-armed.
+        const byType = (t: string) =>
+          objects
+            .filter((x) => x.type === t && x.sql && !isInternalObject(x.name))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        const tables = byType('table');
+        const shadowTables = new Set(this.shadowTableNames());
+        const dataTables = tables.filter((t) => !shadowTables.has(t.name));
+
         const parts: string[] = [];
         parts.push('-- Exported by SQLite/LibSQL/Turso P&E');
         parts.push(`-- Database: ${this.dbPath}`);
         parts.push('--');
-        for (const o of objects.filter((x) => x.sql && x.type !== 'system')) {
-          parts.push(`${o.sql!.replace(/;\s*$/, '')};\n`);
+        parts.push('PRAGMA foreign_keys=OFF;');
+        parts.push('BEGIN TRANSACTION;');
+        for (const t of tables) {
+          parts.push(`${t.sql!.replace(/;\s*$/, '')};`);
         }
-        for (const t of objects.filter((x) => x.type === 'table')) {
+        for (const t of dataTables) {
           parts.push('');
           parts.push(`-- Data for table: ${t.name}`);
-          const names = this.rows(`SELECT * FROM ${quoteIdent(t.name)};`);
-          if (names.length === 0) continue;
-          const cols = this.columnNames(`SELECT * FROM ${quoteIdent(t.name)};`);
-          const lines: string[] = [`INSERT INTO ${quoteIdent(t.name)} (${cols.join(', ')}) VALUES`];
-          for (const row of names) {
+          const dataRows = this.rows(`SELECT * FROM ${quoteIdent(t.name)};`);
+          if (dataRows.length === 0) continue;
+          const cols = Object.keys(dataRows[0] ?? {});
+          const lines: string[] = [`INSERT INTO ${quoteIdent(t.name)} (${cols.map(quoteIdent).join(', ')}) VALUES`];
+          for (const row of dataRows) {
             const vals = cols.map((c) => quoteLiteral(normalizeValue(row[c]))).join(', ');
             lines.push(`  (${vals}),`);
           }
@@ -978,13 +1062,36 @@ export class SqliteAdapter implements DatabaseAdapter {
           lines[lastIdx] = (lines[lastIdx] ?? '').replace(/,$/, '');
           parts.push(lines.join('\n') + ';');
         }
+        // AUTOINCREMENT bookkeeping: without this, a restored database restarts
+        // every AUTOINCREMENT sequence at its table's max rowid, which can
+        // reissue ids that were already used (breaking external references).
+        if (this.tableExists('sqlite_sequence')) {
+          const seqs = this.rows('SELECT name, seq FROM sqlite_sequence;');
+          for (const s of seqs) {
+            parts.push(
+              `UPDATE sqlite_sequence SET seq=${quoteLiteral(normalizeValue(s.seq))} WHERE name=${quoteLiteral(String(s.name))};`
+            );
+          }
+        }
+        for (const v of byType('view')) {
+          parts.push(`${v.sql!.replace(/;\s*$/, '')};`);
+        }
+        for (const i of byType('index')) {
+          parts.push(`${i.sql!.replace(/;\s*$/, '')};`);
+        }
+        for (const tr of byType('trigger')) {
+          parts.push(`${tr.sql!.replace(/;\s*$/, '')};`);
+        }
+        parts.push('COMMIT;');
+        parts.push('PRAGMA foreign_keys=ON;');
         const text = parts.join('\n') + '\n';
         const dest = await this.writeExport(text, 'sql', 'database', destPath);
         return { filePath: dest, sizeBytes: Buffer.byteLength(text) };
       }
       if (format === 'json') {
         const parts: Record<string, unknown>[] = [];
-        for (const t of objects.filter((x) => x.type === 'table')) {
+        const shadowTables = new Set(this.shadowTableNames());
+        for (const t of objects.filter((x) => x.type === 'table' && !shadowTables.has(x.name))) {
           parts.push({ table: t.name, rows: this.rows(`SELECT * FROM ${quoteIdent(t.name)};`) });
         }
         const text = JSON.stringify(parts, (_k, v) => (v instanceof Uint8Array ? 'X' + bytesToHex(v) : v));
@@ -1047,7 +1154,8 @@ export class SqliteAdapter implements DatabaseAdapter {
     conflict: 'skip' | 'replace' | 'fail',
     createTable: boolean
   ): Promise<{ rows: number; skipped: number; tableName: string } | ErrorInfo> {
-    if (!this.db) return { code: 'UNKNOWN', message: 'Database is not open.' };
+    const guard = this.writeGuard();
+    if (guard) return guard;
     try {
       const ext = path.extname(filePath).toLowerCase();
       const format: ImportFormat = ext === '.json' ? 'json' : 'csv';
@@ -1256,6 +1364,41 @@ export class SqliteAdapter implements DatabaseAdapter {
     return this.prepare(sql)
       .columns()
       .map((c) => c.name);
+  }
+
+  /**
+   * Names of virtual-table shadow tables (FTS `…_content`, `…_data`, …).
+   *
+   * A dump must not emit them: their content is derived from the virtual table
+   * itself and recreating both the module table and its shadow tables on import
+   * fails (or corrupts the index). They are invisible to this check only in so
+   * far as `sqlite_master` is — the rule is "a table whose CREATE statement is
+   * absent while a same-prefix CREATE VIRTUAL TABLE exists", which the engine
+   * guarantees for shadow tables by hiding their own `sqlite_master` rows.
+   */
+  private shadowTableNames(): string[] {
+    try {
+      const virtuals = this.rows(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL %';`
+      );
+      const shadows: string[] = [];
+      for (const v of virtuals) {
+        const base = String(v.name);
+        const mod = this.rows(
+          `SELECT arg FROM pragma_module_list_and_args WHERE name = ${quoteLiteral(base)};`
+        );
+        void mod; // pragma_module_list has no args; matching by prefix below.
+        for (const r of this.rows(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ${quoteLiteral(`${base}\\_%`} ESCAPE '\\';`)) {
+          const n = String(r.name);
+          if (n !== base && n.startsWith(`${base}_`)) shadows.push(n);
+        }
+      }
+      return shadows;
+    } catch {
+      // Detection is best-effort: without it we are back to exporting shadow
+      // tables, not to failing the export.
+      return [];
+    }
   }
 
   /**

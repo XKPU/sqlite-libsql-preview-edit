@@ -30,8 +30,14 @@ import {
  * inside these methods so the webview always receives a well-formed message.
  */
 export interface DatabaseAdapter {
-  /** Open (or re-open) a database file. Returns the info after opening. */
-  open(path: string): Promise<DatabaseInfo | ErrorInfo>;
+  /**
+   * Open (or re-open) a database file. Returns the info after opening.
+   *
+   * `readOnly` asks the engine for a read-only connection, which is the hard
+   * host-side enforcement of the `libSqlPreviewEdit.readOnly` setting; the
+   * adapter additionally refuses every mutating call while the flag is set.
+   */
+  open(path: string, options?: { readOnly?: boolean }): Promise<DatabaseInfo | ErrorInfo>;
 
   /** True when open() has produced a usable handle. */
   isOpen(): boolean;
@@ -45,8 +51,14 @@ export interface DatabaseAdapter {
   /** Columns of a table/view, plus the CREATE statement. */
   getSchema(objectName: string): Promise<{ columns: ColumnInfo[]; sql: string } | ErrorInfo>;
 
-  /** Execute a single statement, returning either a result set or an error. */
-  query(sql: string, page: number, pageSize: number): Promise<QueryResult | ErrorInfo>;
+  /**
+   * Execute a single statement, returning either a result set or an error.
+   *
+   * `params` are positional bind values for `?` placeholders in `sql`. Filter
+   * and search values from the webview are bound, never interpolated into the
+   * SQL text (see `HostRequest.query.params`).
+   */
+  query(sql: string, page: number, pageSize: number, params?: SqlValue[]): Promise<QueryResult | ErrorInfo>;
 
   /** Count rows of a table (does not run a full scan when a stat exists). */
   rowCount(objectName: string): Promise<number | ErrorInfo>;
