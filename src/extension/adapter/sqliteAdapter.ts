@@ -202,6 +202,17 @@ function getSqlite(): SqliteConstructor {
 export const LOCK_TIMEOUT_MS = 250;
 
 /**
+ * Row cap for the SQL editor's result set.
+ *
+ * The editor has no pager, so a hard clip is unavoidable somewhere; the choice
+ * is whether the clip is silent (the old hidden `1000`) or reported. The
+ * result's `truncated` flag is derived from `totalRows`, so the UI can say
+ * "showing the first N of M" instead of presenting a cut-off table as the
+ * complete answer.
+ */
+export const SQL_EDITOR_MAX_ROWS = 10_000;
+
+/**
  * Above this magnitude an integer cannot survive the trip through a JS number.
  * `Number.MAX_SAFE_INTEGER` is 2^53 - 1; anything beyond it silently rounds,
  * which is how `127416364815353349` used to come back as a different value.
@@ -382,8 +393,14 @@ function isInternalObject(name: string): boolean {
 class Mutex {
   private tail: Promise<unknown> = Promise.resolve();
 
-  /** Runs `task` after every previously queued task has settled. */
-  run<T>(task: () => Promise<T>): Promise<T> {
+  /**
+   * Runs `task` after every previously queued task has settled.
+   *
+   * The task may be synchronous or asynchronous: better-sqlite3's own API is
+   * sync, so most write paths hand back a plain value and only the surrounding
+   * bookkeeping is async.
+   */
+  run<T>(task: () => T | Promise<T>): Promise<T> {
     const result = this.tail.then(task, task);
     // Keep the chain alive regardless of whether the task resolves or rejects,
     // so one failure cannot stall every later operation.
@@ -810,8 +827,14 @@ export class SqliteAdapter implements DatabaseAdapter {
             const sets = edit.edits.map((e) => `${quoteIdent(e.column)} = ?`).join(', ');
             const params = bindAll([...edit.edits.map((e) => e.value), ...edit.key.keyValues]);
             const keyWhere = edit.key.keyColumns.map((c) => `${quoteIdent(c)} = ?`).join(' AND ');
-            tx.prepare(`UPDATE ${quoteIdent(edit.key.table)} SET ${sets} WHERE ${keyWhere};`).run(...params);
-            changes += 1;
+            // Count rows the engine actually touched, not edits attempted: the
+            // key can have changed underneath (another editor, a concurrent
+            // delete), and an UPDATE matching 0 rows must not be reported as a
+            // successful save.
+            const res = tx
+              .prepare(`UPDATE ${quoteIdent(edit.key.table)} SET ${sets} WHERE ${keyWhere};`)
+              .run(...params);
+            changes += res.changes;
           }
           return { changes };
         });
@@ -852,9 +875,29 @@ export class SqliteAdapter implements DatabaseAdapter {
     // binder turns that into SQL NULL rather than crashing (see `toBindValue`).
     const params = bindAll(columns.map((c) => values[c]));
     try {
-      const lastId = this.inTransaction((tx) =>
-        tx.prepare(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${placeholders});`).run(...params)
+      const lastId = await this.mutex.run(() =>
+        this.inTransaction((tx) =>
+          tx.prepare(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${placeholders});`).run(...params)
+        )
       );
+      // `lastInsertRowid` only means something for rowid tables. On a WITHOUT
+      // ROWID table the value is meaningless (usually 0), so reporting it as a
+      // usable key would make every later edit/delete of the new row target a
+      // row that does not exist. When the table has real primary key columns,
+      // read those back from the just-inserted row so the webview can key edits
+      // off them instead.
+      const pkColumns = schema.columns.filter((c) => c.pk).map((c) => c.name);
+      if (pkColumns.length > 0 && !pkColumns.includes('rowid')) {
+        const keyWhere = pkColumns.map((c) => `${quoteIdent(c)} = ?`).join(' AND ');
+        const inserted = this.rows(
+          `SELECT ${pkColumns.map(quoteIdent).join(', ')} FROM ${quoteIdent(table)} WHERE ${keyWhere} LIMIT 1;`,
+          pkColumns.map((c) => values[c] ?? null)
+        );
+        if (inserted.length > 0 && inserted[0]) {
+          const first = inserted[0];
+          return { key: { columns: pkColumns, values: pkColumns.map((c) => first[c] ?? null) } };
+        }
+      }
       return { key: { columns: ['rowid'], values: [this.toSqlValue(lastId.lastInsertRowid)] } };
     } catch (e) {
       return toErrorInfo(e, 'Insert failed and was rolled back.');
@@ -878,15 +921,17 @@ export class SqliteAdapter implements DatabaseAdapter {
       };
     }
     try {
-      const changes = this.inTransaction((tx) => {
-        let n = 0;
-        for (const k of keys) {
-          const where = k.keyColumns.map((c) => `${quoteIdent(c)} = ?`).join(' AND ');
-          tx.prepare(`DELETE FROM ${quoteIdent(k.table)} WHERE ${where};`).run(...bindAll(k.keyValues));
-          n += 1;
-        }
-        return n;
-      });
+      const changes = await this.mutex.run(() =>
+        this.inTransaction((tx) => {
+          let n = 0;
+          for (const k of keys) {
+            const where = k.keyColumns.map((c) => `${quoteIdent(c)} = ?`).join(' AND ');
+            tx.prepare(`DELETE FROM ${quoteIdent(k.table)} WHERE ${where};`).run(...bindAll(k.keyValues));
+            n += 1;
+          }
+          return n;
+        })
+      );
       return { changes };
     } catch (e) {
       return toErrorInfo(e, 'Delete failed and was rolled back.');
@@ -909,12 +954,14 @@ export class SqliteAdapter implements DatabaseAdapter {
     const cols = nonPkCols.map((c) => quoteIdent(c.name)).join(', ');
     const where = keyColumns.map((c) => `${quoteIdent(c)} = ?`).join(' AND ');
     try {
-      const lastId = this.inTransaction((tx) =>
-        tx
-          .prepare(
-            `INSERT INTO ${quoteIdent(table)} (${cols}) SELECT ${cols} FROM ${quoteIdent(table)} WHERE ${where} LIMIT 1;`
-          )
-          .run(...bindAll(keyValues))
+      const lastId = await this.mutex.run(() =>
+        this.inTransaction((tx) =>
+          tx
+            .prepare(
+              `INSERT INTO ${quoteIdent(table)} (${cols}) SELECT ${cols} FROM ${quoteIdent(table)} WHERE ${where} LIMIT 1;`
+            )
+            .run(...bindAll(keyValues))
+        )
       );
       return { key: { columns: ['rowid'], values: [this.toSqlValue(lastId.lastInsertRowid)] } };
     } catch (e) {
@@ -926,31 +973,37 @@ export class SqliteAdapter implements DatabaseAdapter {
     const guard = this.writeGuard();
     if (guard) return guard;
     try {
-      return this.inTransaction((tx) => {
-        let count = 0;
-        let affectedRows = 0;
-        for (const stmt of statements) {
-          const s = stmt.trim();
-          if (s.length === 0) continue;
-          const prepared = tx.prepare(s);
-          if (prepared.reader) {
-            // A SELECT inside a statement batch has no effect to count, but it
-            // must still be executed rather than skipped.
-            prepared.all();
-          } else {
-            affectedRows += prepared.run().changes;
+      return await this.mutex.run(() =>
+        this.inTransaction((tx) => {
+          let count = 0;
+          let affectedRows = 0;
+          for (const stmt of statements) {
+            const s = stmt.trim();
+            if (s.length === 0) continue;
+            const prepared = tx.prepare(s);
+            if (prepared.reader) {
+              // A SELECT inside a statement batch has no effect to count, but it
+              // must still be executed rather than skipped.
+              prepared.all();
+            } else {
+              affectedRows += prepared.run().changes;
+            }
+            count += 1;
           }
-          count += 1;
-        }
-        return { statements: count, affectedRows };
-      });
+          return { statements: count, affectedRows };
+        })
+      );
     } catch (e) {
       return toErrorInfo(e, 'Transaction failed and was rolled back.');
     }
   }
 
   async executeSql(sql: string): Promise<QueryResult | ErrorInfo> {
-    return this.query(sql, 0, 1000);
+    // The SQL editor has no pager, so its result must not be silently clipped:
+    // page 0 with the page size above every realistic row count returns the
+    // whole result set, and `truncated` still tells the user when a genuinely
+    // enormous result was capped.
+    return this.query(sql, 0, SQL_EDITOR_MAX_ROWS);
   }
 
   async executeDdl(statements: string[]): Promise<{ statements: number } | ErrorInfo> {
@@ -975,7 +1028,9 @@ export class SqliteAdapter implements DatabaseAdapter {
       return { code: 'SQL_ERROR', message: `Cannot drop an object of type "${type}".` };
     }
     try {
-      this.inTransaction((tx) => tx.prepare(`DROP ${typeName} IF EXISTS ${quoteIdent(name)};`).run());
+      await this.mutex.run(() =>
+        this.inTransaction((tx) => tx.prepare(`DROP ${typeName} IF EXISTS ${quoteIdent(name)};`).run())
+      );
       return { ok: true };
     } catch (e) {
       return toErrorInfo(e, `Failed to delete ${type} "${name}".`);
@@ -1152,13 +1207,16 @@ export class SqliteAdapter implements DatabaseAdapter {
     tableName: string,
     mappings: ImportFieldMapping[],
     conflict: 'skip' | 'replace' | 'fail',
-    createTable: boolean
+    createTable: boolean,
+    format: ImportFormat = 'csv'
   ): Promise<{ rows: number; skipped: number; tableName: string } | ErrorInfo> {
     const guard = this.writeGuard();
     if (guard) return guard;
     try {
-      const ext = path.extname(filePath).toLowerCase();
-      const format: ImportFormat = ext === '.json' ? 'json' : 'csv';
+      // Honour the format the user picked in the dialog. The file extension is
+      // only a hint — a `.txt` CSV or a JSON file saved with another suffix
+      // would previously be re-parsed as CSV, silently mangling every row.
+      // Callers that predate the `format` parameter default to CSV.
       let rows: Record<string, SqlValue>[] = [];
       if (format === 'json') {
         const text = await fs.promises.readFile(filePath, 'utf8');
@@ -1191,7 +1249,9 @@ export class SqliteAdapter implements DatabaseAdapter {
       const exists = this.tableExists(tableName);
       if (createTable && !exists) {
         const colsDef = mappings.map((m) => `${quoteIdent(m.target)} ${m.inferredType || 'TEXT'}`).join(', ');
-        this.inTransaction((tx) => tx.prepare(`CREATE TABLE ${quoteIdent(tableName)} (${colsDef});`).run());
+        await this.mutex.run(() =>
+          this.inTransaction((tx) => tx.prepare(`CREATE TABLE ${quoteIdent(tableName)} (${colsDef});`).run())
+        );
       }
       if (!exists && !createTable) {
         return { code: 'SQL_ERROR', message: `Table "${tableName}" does not exist and createTable is disabled.` };
@@ -1203,30 +1263,32 @@ export class SqliteAdapter implements DatabaseAdapter {
       // inserted unless an exception was raised, so every SKIPPED row was
       // counted as inserted and the "N rows imported" figure was wrong. Here the
       // engine's own affected-row count decides.
-      return this.inTransaction((tx) => {
-        const colList = columns.map((c) => quoteIdent(c)).join(', ');
-        const placeholders = columns.map(() => '?').join(', ');
-        const stmtSql =
-          conflict === 'skip'
-            ? `INSERT OR IGNORE INTO ${quoteIdent(tableName)} (${colList}) VALUES (${placeholders});`
-            : conflict === 'replace'
-              ? `INSERT OR REPLACE INTO ${quoteIdent(tableName)} (${colList}) VALUES (${placeholders});`
-              : `INSERT INTO ${quoteIdent(tableName)} (${colList}) VALUES (${placeholders});`;
-        const statement = tx.prepare(stmtSql);
-        let inserted = 0;
-        let skipped = 0;
-        for (const row of rows) {
-          const params = bindAll(columns.map((c) => row[c]));
-          const res = statement.run(...params);
-          if (res.changes > 0) inserted += 1;
-          // Under "fail" a conflict throws before reaching here, so a zero-change
-          // row can only be a skip (or a replace that rewrote an identical row,
-          // which the engine still counts as a change).
-          else if (conflict === 'skip') skipped += 1;
-          else inserted += 1;
-        }
-        return { rows: inserted, skipped, tableName };
-      });
+      return await this.mutex.run(() =>
+        this.inTransaction((tx) => {
+          const colList = columns.map((c) => quoteIdent(c)).join(', ');
+          const placeholders = columns.map(() => '?').join(', ');
+          const stmtSql =
+            conflict === 'skip'
+              ? `INSERT OR IGNORE INTO ${quoteIdent(tableName)} (${colList}) VALUES (${placeholders});`
+              : conflict === 'replace'
+                ? `INSERT OR REPLACE INTO ${quoteIdent(tableName)} (${colList}) VALUES (${placeholders});`
+                : `INSERT INTO ${quoteIdent(tableName)} (${colList}) VALUES (${placeholders});`;
+          const statement = tx.prepare(stmtSql);
+          let inserted = 0;
+          let skipped = 0;
+          for (const row of rows) {
+            const params = bindAll(columns.map((c) => row[c]));
+            const res = statement.run(...params);
+            if (res.changes > 0) inserted += 1;
+            // Under "fail" a conflict throws before reaching here, so a zero-change
+            // row can only be a skip (or a replace that rewrote an identical row,
+            // which the engine still counts as a change).
+            else if (conflict === 'skip') skipped += 1;
+            else inserted += 1;
+          }
+          return { rows: inserted, skipped, tableName };
+        })
+      );
     } catch (e) {
       return toErrorInfo(e, 'Import commit failed.');
     }
@@ -1303,6 +1365,11 @@ export class SqliteAdapter implements DatabaseAdapter {
    * BEGIN as well as the statements. A failure anywhere rolls the entire set
    * back, so a half-applied batch can never reach the disk, and `ROLLBACK` is
    * attempted in a `catch` that rethrows the ORIGINAL error.
+   *
+   * Callers MUST hold the mutex (via `this.mutex.run`/`runSync`) — a connection
+   * hosts one transaction at a time, so two interleaved callers would trip
+   * "cannot start a transaction within a transaction". The unguarded entry
+   * point is private precisely so that mistake cannot happen by accident.
    */
   private inTransaction<T>(body: (tx: SqliteDatabase) => T): T {
     const db = this.db;
@@ -1350,8 +1417,9 @@ export class SqliteAdapter implements DatabaseAdapter {
    * `quoteLiteral`/CSV would not render as the user's number. Normalising here
    * keeps every read path — grid, export and import — on one representation.
    */
-  private rows(sql: string, params: SqlValue[] = []): Record<string, SqlValue>[] {
-    const raw = this.prepareForRead(sql).all(...bindAll(params)) as Record<string, unknown>[];
+  private rows(sql: string, params: readonly (SqlValue | undefined)[] = []): Record<string, SqlValue>[] {
+    const bound: unknown[] = params.map((p) => (p === undefined ? null : p));
+    const raw = this.prepareForRead(sql).all(...bindAll(bound as SqlValue[])) as Record<string, unknown>[];
     return raw.map((row) => {
       const out: Record<string, SqlValue> = {};
       for (const key of Object.keys(row)) out[key] = readValue(row[key]);
@@ -1384,11 +1452,18 @@ export class SqliteAdapter implements DatabaseAdapter {
       const shadows: string[] = [];
       for (const v of virtuals) {
         const base = String(v.name);
-        const mod = this.rows(
-          `SELECT arg FROM pragma_module_list_and_args WHERE name = ${quoteLiteral(base)};`
+        // Shadow tables are the engine-maintained children of a virtual table:
+        // every table whose name is `<virtual>_<suffix>`. The module's own
+        // internal bookkeeping lives in these (FTS: `…_content`, `…_data`,
+        // `…_idx`, …) and recreating them alongside the virtual table breaks
+        // the import.
+        const likePattern = `${base}\\_%`;
+        const shadowRows = this.rows(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE " +
+            quoteLiteral(likePattern) +
+            " ESCAPE '\\';"
         );
-        void mod; // pragma_module_list has no args; matching by prefix below.
-        for (const r of this.rows(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ${quoteLiteral(`${base}\\_%`} ESCAPE '\\';`)) {
+        for (const r of shadowRows) {
           const n = String(r.name);
           if (n !== base && n.startsWith(`${base}_`)) shadows.push(n);
         }

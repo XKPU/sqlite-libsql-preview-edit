@@ -175,6 +175,8 @@ export interface DatabaseState {
   closeExport: () => void;
   doExport: (format: ExportFormat, selectSql?: string) => Promise<void>;
   startImport: (tableName: string) => void;
+  /** Native open dialog on the host; resolves to '' when dismissed. */
+  pickImportFile: () => Promise<string>;
   importPreview: (filePath: string, format: ImportFormat) => Promise<void>;
   setImportMapping: (i: number, target: string, type: string) => void;
   setImportTableName: (name: string) => void;
@@ -1122,6 +1124,7 @@ export function useDatabaseState(): DatabaseState {
     sqlExecuting,
     importPreviewState,
     activeImportTable,
+    pickImportFile: bridge.pickImportFile,
     showExportDialog,
     showNewTableDialog,
     openNewTableDialog,

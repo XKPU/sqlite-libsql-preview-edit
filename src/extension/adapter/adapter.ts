@@ -103,8 +103,8 @@ export interface DatabaseAdapter {
   /** Inspect an external CSV/JSON file for import mapping. */
   importPreview(filePath: string, format: ImportFormat): Promise<{ headers: string[]; mappings: ImportFieldMapping[]; previewRows: SqlValue[][] } | ErrorInfo>;
 
-  /** Run the configured import after the user confirms the mapping. */
-  importCommit(filePath: string, tableName: string, mappings: ImportFieldMapping[], conflict: 'skip' | 'replace' | 'fail', createTable: boolean): Promise<{ rows: number; skipped: number; tableName: string } | ErrorInfo>;
+  /** Run the configured import after the user confirms the mapping. `format` is the user's explicit choice (default 'csv' for older callers); the file extension is only a hint. */
+  importCommit(filePath: string, tableName: string, mappings: ImportFieldMapping[], conflict: 'skip' | 'replace' | 'fail', createTable: boolean, format?: ImportFormat): Promise<{ rows: number; skipped: number; tableName: string } | ErrorInfo>;
 
   /** Check whether the database is currently writable. */
   isWritable(): Promise<boolean>;

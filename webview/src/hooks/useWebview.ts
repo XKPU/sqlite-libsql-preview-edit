@@ -61,6 +61,8 @@ export type HostMessageHandler = (msg: HostResponse) => void;
 type Pending = {
   resolve: (value: ResponseResult) => void;
   reject: (reason: ResponseResult) => void;
+  /** Cleared when the reply arrives; see `send`'s timeout note. */
+  timer?: ReturnType<typeof setTimeout>;
 };
 
 /** The shape returned by send(). */
@@ -99,6 +101,11 @@ export interface WebviewBridge {
     orderBy?: string;
     where?: string;
   }) => Promise<ResponseResult>;
+  /**
+   * Native open dialog on the host for choosing an import file. Resolves to
+   * the chosen path, or an empty string when the user dismissed the dialog.
+   */
+  pickImportFile: () => Promise<string>;
 }
 
 /** Loose shape of a HostRequest — any object with an id + type discriminator. */
@@ -200,8 +207,11 @@ export function useWebview(): WebviewBridge & {
         const entry: Pending = { resolve, reject };
         pending.current.set(id, entry);
         vscodeApi.current!.postMessage(idRequest);
-        // Timeout safety: if the host disappears, reject with a synthesised error.
-        setTimeout(() => {
+        // Timeout safety: if the host disappears, reject with a synthesised
+        // error. The timer is cleared on reply so a chatty session does not
+        // accumulate one dead timer per request (each would otherwise hold its
+        // closure — and the pending entry — alive for two minutes).
+        const timer = setTimeout(() => {
           if (!pending.current.has(id)) return;
           pending.current.delete(id);
           reject({
@@ -209,6 +219,7 @@ export function useWebview(): WebviewBridge & {
             error: { code: 'UNKNOWN', message: 'The extension host did not respond.' }
           });
         }, 120_000);
+        entry.timer = timer;
       });
     },
     []
@@ -239,8 +250,18 @@ export function useWebview(): WebviewBridge & {
         }
       }
 
-      // Record what the host sent; the handshake depends on these arriving.
-      hostLogRef.current?.('info', `webview received: id=${response.id} type=${response.type}`);
+      // Record what the host sent. Only unexpected types are logged — echoing
+      // every response back used to double the message traffic (each reply
+      // spawned a log round-trip on the host) and drowned real signals.
+      if (
+        response.type !== 'result' &&
+        response.type !== 'error' &&
+        response.type !== 'schema' &&
+        response.type !== 'metadata' &&
+        response.type !== 'info'
+      ) {
+        hostLogRef.current?.('info', `webview received: id=${response.id} type=${response.type}`);
+      }
 
       // Side effects we care about globally.
       if (response.type === 'languageChanged') {
@@ -256,6 +277,7 @@ export function useWebview(): WebviewBridge & {
       if (id > 0 && pending.current.has(id)) {
         const entry = pending.current.get(id)!;
         pending.current.delete(id);
+        if (entry.timer) clearTimeout(entry.timer);
         if (response.type === 'error') {
           entry.reject({ ok: false, error: response.error });
         } else {
@@ -308,6 +330,20 @@ export function useWebview(): WebviewBridge & {
       send({ type: 'query', ...opts }),
     [send]
   );
+
+  /**
+   * Native open dialog on the host for choosing an import file.
+   *
+   * Resolves to the chosen path, or an empty string when the user dismissed
+   * the dialog (a normal outcome, not an error). A webview cannot open a
+   * picker itself — `window.prompt` returns null inside VS Code.
+   */
+  const pickImportFile = useCallback(async (): Promise<string> => {
+    const r = await send({ type: 'pickImportFile' });
+    if (r.ok && r.response.type === 'importFilePicked') return r.response.path;
+    if (!r.ok) throw new Error(r.error.message);
+    return '';
+  }, [send]);
 
   /**
    * Fire-and-forget diagnostic. Uses the raw VS Code API rather than `send`
@@ -392,6 +428,7 @@ export function useWebview(): WebviewBridge & {
       executeSql,
       executeStatements,
       query,
+      pickImportFile,
       get language() {
         return languageRef.current;
       },

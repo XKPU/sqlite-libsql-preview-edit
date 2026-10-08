@@ -18,6 +18,8 @@ export const zhCn = {
   'cmd.newTableDialog': '新建表',
   'cmd.openSettings': '打开设置',
   'cmd.clearCache': '清除缓存',
+  'cmd.clearCacheEmpty': '当前没有配置受保护表（libSqlPreviewEdit.readOnlyTables）。',
+  'cmd.clearCacheDone': '已从 libSqlPreviewEdit.readOnlyTables 中移除 {count} 个受保护表。',
 
   /* webview messages */
   'msg.loading': '正在加载数据库…',
@@ -143,6 +145,7 @@ export const zhCn = {
   'data.null': 'NULL',
   'data.search': '过滤行…',
   'data.columnFilter': '过滤 {column}',
+  'data.columnFilterSelect': '过滤…',
   'data.sortAsc': '升序排序',
   'data.sortDesc': '降序排序',
   'data.pk': '主键',
@@ -231,6 +234,7 @@ export const zhCn = {
   'import.tableNamePlaceholder': 'target_table',
   'import.file': '文件',
   'import.filePlaceholder': '/path/to/file.csv',
+  'import.pickOpenLabel': '选择数据文件',
   'import.createNew': '若不存在则创建表',
   'import.conflict': '冲突处理',
   'import.conflictSkip': '跳过重复',

@@ -21,6 +21,8 @@ export const en = {
   'cmd.newTableDialog': 'New Table',
   'cmd.openSettings': 'Open Settings',
   'cmd.clearCache': 'Clear Cache',
+  'cmd.clearCacheEmpty': 'No protected tables are configured (libSqlPreviewEdit.readOnlyTables).',
+  'cmd.clearCacheDone': 'Removed {count} protected table(s) from libSqlPreviewEdit.readOnlyTables.',
 
   /* webview messages */
   'msg.loading': 'Loading database…',
@@ -146,6 +148,7 @@ export const en = {
   'data.null': 'NULL',
   'data.search': 'Filter rows…',
   'data.columnFilter': 'Filter {column}',
+  'data.columnFilterSelect': 'Filter…',
   'data.sortAsc': 'Sort ascending',
   'data.sortDesc': 'Sort descending',
   'data.pk': 'PK',
@@ -234,6 +237,7 @@ export const en = {
   'import.tableNamePlaceholder': 'target_table',
   'import.file': 'File',
   'import.filePlaceholder': '/path/to/file.csv',
+  'import.pickOpenLabel': 'Choose data file',
   'import.createNew': 'Create table if it does not exist',
   'import.conflict': 'On conflict',
   'import.conflictSkip': 'Skip duplicates',

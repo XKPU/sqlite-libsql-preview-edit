@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import React, { useState } from 'react';
-import { quoteIdent } from '../../../src/shared/protocol';
+import { quoteIdent, quoteLiteral } from '../../../src/shared/protocol';
 import { useI18n } from '../i18n';
 import type { DatabaseState } from '../hooks/useDatabaseState';
 import {
@@ -145,9 +145,19 @@ const AddColumnDialog: React.FC<{ state: DatabaseState; onClose: () => void }> =
     setApplying(true);
     setError(null);
     try {
+      // The default value is user input interpolated into DDL, so it is quoted
+      // as a literal — a raw splice let `x'); DROP TABLE t; --` through as SQL.
+      // NULL stays bare (it is a keyword, not a string), and expression syntax
+      // like CURRENT_TIMESTAMP is recognized explicitly so power users keep it.
+      const dv = defaultValue.trim();
+      const defaultClause = dv
+        ? dv.toUpperCase() === 'NULL' || dv.toUpperCase() === 'CURRENT_TIMESTAMP' || dv.toUpperCase() === 'CURRENT_TIME' || dv.toUpperCase() === 'CURRENT_DATE'
+          ? ` DEFAULT ${dv.toUpperCase()}`
+          : ` DEFAULT ${quoteLiteral(dv)}`
+        : '';
       const sql = `ALTER TABLE ${quoteIdent(state.currentTable!)} ADD COLUMN ${quoteIdent(name.trim())} ${type}${
         notNull ? ' NOT NULL' : ''
-      }${defaultValue.trim() ? ` DEFAULT ${defaultValue.trim()}` : ''}`;
+      }${defaultClause}`;
       await state.executeDdl([sql]);
       onClose();
     } catch (e) {

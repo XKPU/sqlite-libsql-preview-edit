@@ -13,7 +13,11 @@ export function normalizeValue(v: unknown): SqlValue {
   if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
   if (v instanceof Uint8Array) return v;
   if (ArrayBuffer.isView(v)) {
-    return new Uint8Array((v as ArrayBufferView).buffer);
+    // A view may cover a SLICE of a larger buffer (`byteOffset`/`byteLength`);
+    // wrapping the whole buffer silently appends bytes that are not part of
+    // the value, corrupting BLOBs on round-trip.
+    const view = v as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   }
   return String(v);
 }
@@ -24,7 +28,11 @@ export function convertJsonValue(v: unknown): SqlValue {
   if (typeof v === 'boolean' || typeof v === 'number') return v;
   if (typeof v === 'string') return v;
   if (v instanceof Uint8Array) return v;
-  if (ArrayBuffer.isView(v)) return new Uint8Array((v as ArrayBufferView).buffer);
+  if (ArrayBuffer.isView(v)) {
+    // Same slice rule as `normalizeValue`.
+    const view = v as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
   return JSON.stringify(v);
 }
 

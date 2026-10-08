@@ -58,7 +58,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('libSqlPreviewEdit.close', async () => {
-      await vscode.commands.executeCommand('vscode.close');
+      // `vscode.close` does not exist; the built-in close-editor command is
+      // `workbench.action.closeActiveEditor`. The old id threw "command not
+      // found" at runtime, so the keybinding never closed anything.
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     })
   );
 
@@ -86,8 +89,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('libSqlPreviewEdit.clearCache', async () => {
+      // Historical name: the command actually resets the protected-tables list
+      // (`libSqlPreviewEdit.readOnlyTables`), which is the only "cached" state
+      // this extension keeps. The command id stays for keybinding/menu
+      // compatibility; the message now says what really happened.
+      const current = state.settings.get<string[]>('readOnlyTables', []) ?? [];
+      if (current.length === 0) {
+        await vscode.window.showInformationMessage(state.i18n.t('cmd.clearCacheEmpty'));
+        return;
+      }
       await state.settings.update('readOnlyTables', [], vscode.ConfigurationTarget.Global);
-      await vscode.window.showInformationMessage(state.i18n.t('cmd.clearCache'));
+      await vscode.window.showInformationMessage(
+        state.i18n.t('cmd.clearCacheDone', { count: current.length })
+      );
     })
   );
 

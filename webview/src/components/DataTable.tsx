@@ -27,8 +27,12 @@ function parseCellInput(value: string, column: ColumnInfo): SqlValue {
   ) {
     if (/^-?\d+$/.test(trimmed)) return parseInt(trimmed, 10);
     if (/^-?\d*\.\d+$/.test(trimmed)) return parseFloat(trimmed);
-    if (trimmed.toLowerCase() === 'true') return true;
-    if (trimmed.toLowerCase() === 'false') return false;
+    // `true`/`false` must land as integers: SQLite has no boolean storage class,
+    // and the engine REJECTS a JS boolean at the binding step (`TypeError:
+    // SQLite3 can only bind numbers, strings, bigints, buffers, and null`).
+    // The convention used everywhere else in this codebase is 1/0.
+    if (trimmed.toLowerCase() === 'true') return 1;
+    if (trimmed.toLowerCase() === 'false') return 0;
   }
   return value;
 }
@@ -51,7 +55,6 @@ export const DataTable: React.FC<DataTableProps> = ({ state }) => {
     currentTable,
     settings,
     loading,
-    rowCells,
     rowKeys
   } = state;
 
@@ -160,12 +163,14 @@ export const DataTable: React.FC<DataTableProps> = ({ state }) => {
             value={filters[col.name] || ''}
             onChange={(e) => state.setColumnFilter(col.name, e.target.value)}
             aria-label={t('data.columnFilter', { column: col.name })}
-            disabled={readOnly ? false : false}
+            disabled={readOnly}
           >
-            <option value="">{t('data.columnFilter', { column: col.name })}</option>
-            {Array.from({ length: 20 }).map((_, i) => {
-              return <option key={i} value={`%_${i}`}>%_{i}</option>;
-            })}
+            <option value="">{t('data.columnFilterSelect')}</option>
+            {['NULL', 'NOT NULL', '0', '1', '-1'].map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
           </Select>
           {hasFilter && (
             <span className="col-filter-clear" onClick={() => state.clearColumnFilter(col.name)} title={t('cancel')}>
@@ -243,11 +248,13 @@ export const DataTable: React.FC<DataTableProps> = ({ state }) => {
         <div className="tool-group">
           <ToolbarIconButton
             icon="duplicate"
-            disabled={readOnly}
+            disabled={readOnly || !hasPk}
             onClick={() => {
-              if (editingCell) return;
-              // duplicate first visible row
-              if (rowCells && rowCells.length > 0) void state.duplicateRow(0);
+              // Duplicate the currently selected row. The old hard-coded `0`
+              // always copied the first visible row no matter which row the
+              // user was on; there is no row-selection model, so the closest
+              // signal is the cell being edited (falling back to the first).
+              void state.duplicateRow(editingCell?.row ?? 0);
             }}
             label={t('data.duplicateRow')}
           />

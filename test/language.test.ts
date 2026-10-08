@@ -38,6 +38,7 @@ const HOST_HANDLED = new Set([
   'executeStatements',
   'executeDdl',
   'deleteObject',
+  'pickImportFile',
   'init',
   'close',
   'setLanguage',

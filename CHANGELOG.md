@@ -21,11 +21,47 @@
   修复 `LIKE` 转义声明 — 现正确声明 `ESCAPE '\'`，使转义后的通配符（`\%`、`\_`）按字面量处理
 - Fixed `query()` failing on statements with multiple trailing semicolons (e.g. `SELECT 1;;`)\
   修复 `query()` 在多个尾随分号时失败的问题（如 `SELECT 1;;`）
+- Rewrote the SQL export pipeline — exports now wrap in a transaction with proper object ordering (tables → views → indexes → triggers), preserve `sqlite_sequence` rows as `UPDATE` statements, and exclude FTS shadow tables from both SQL and JSON exports\
+  重写 SQL 导出流程 — 导出以事务包裹并按正确顺序排列对象（表 → 视图 → 索引 → 触发器），将 `sqlite_sequence` 保留为 `UPDATE` 语句，并在 SQL/JSON 双导出中排除 FTS 阴影表
+- Fixed `open` and `openSettings` messages never receiving a response, which caused the webview to hang for the full 120-second timeout\
+  修复 `open` 和 `openSettings` 消息永不回包导致 Webview 挂满 120 秒超时的问题
+- Fixed the import file picker — replaced `window.prompt` (always `null` in webviews) with a native `showOpenDialog` through a new `pickImportFile` protocol message\
+  修复导入选文件 — 将 `window.prompt`（在 Webview 中恒为 `null`）替换为通过新协议消息 `pickImportFile` 调起的原生 `showOpenDialog`
+- Fixed the import preview dialog being cleared on every re-render by switching its effect to a ref-based state pattern\
+  修复导入预览对话框每次重渲染都被清空 — effect 改用 ref 状态模式，依赖仅剩 `[open]`
+- Fixed the "Close Database" command referencing the non-existent `vscode.close` — now uses `workbench.action.closeActiveEditor`\
+  修复“关闭数据库”命令引用了不存在的 `vscode.close` — 现改用 `workbench.action.closeActiveEditor`
+- Fixed six write entry points (`insertRow`, `deleteRows`, `duplicateRow`, `executeStatements`, `deleteObject`, `importCommit`) bypassing the mutex, which could cause nested transactions under concurrent messages — all now wrapped in `mutex.run`\
+  修复 6 个写入口绕过互斥锁导致并发消息可嵌套事务 — 现全部包入 `mutex.run`
+- Fixed the SQL editor silently truncating results at 1,000 rows — the limit is now 10,000, with a `truncated` flag reported to the UI\
+  修复 SQL 编辑器静默截断 1,000 行结果 — 上限提升至 10,000，并上报 `truncated` 标记
+- Fixed `commitEdits` reporting incorrect change counts by accumulating the actual `changes` from each `UPDATE` statement\
+  修复 `commitEdits` 计数错误 — 按每条 `UPDATE` 的实际 `changes` 累计
+- Fixed `WITHOUT ROWID` tables returning a fake primary key (the rowid) after insert — the real primary key columns are now re-read after insertion\
+  修复 `WITHOUT ROWID` 表插入后返回假主键（rowid）— 现插入后回读真实主键列
+- Fixed the "Add Column" dialog concatenating the `DEFAULT` value directly into the SQL string — it now goes through `quoteLiteral` (except for `NULL`/`CURRENT_*` keywords)\
+  修复“加列”对话框将 `DEFAULT` 值裸拼接入 SQL — 现经 `quoteLiteral` 处理（`NULL`/`CURRENT_*` 关键字除外）
+- Fixed the "Copy Row" button always copying row 0 regardless of which cell is being edited\
+  修复“复制行”按钮永远复制第 0 行而非当前编辑行
+- Fixed the column filter dropdown offering useless options and containing a dead expression (`disabled={readOnly ? false : false}`)\
+  修复列过滤器下拉选项无用且包含恒等死表达式
+- Fixed `true`/`false` input producing JavaScript booleans that `better-sqlite3` rejects — now converted to `1`/`0`\
+  修复 `true`/`false` 输入产生 `better-sqlite3` 拒绝绑定的布尔值 — 现转为 `1`/`0`
+- Fixed `normalizeValue` silently dropping `byteOffset`/`byteLength` when wrapping `ArrayBuffer` views\
+  修复 `normalizeValue` 包装 `ArrayBuffer` 视图时丢弃 `byteOffset`/`byteLength`
+- Fixed the per-request 120-second timeout timer never being cleared after the response arrived\
+  修复每个请求的 120 秒超时定时器回包后永不清理
+- Fixed the import format being determined by file extension instead of the user's explicit format selection — `importCommit` now carries a `format` parameter\
+  修复导入格式取文件扩展名而非用户显式选择 — `importCommit` 现携带 `format` 参数
+- Fixed export and import dialogs using the wrong panel's working directory — they are now panel-aware and prefer the sender panel's document directory\
+  修复导出/导入对话框用错面板的工作目录 — 现感知所属面板，优先使用发送方面板的文档目录
+- Fixed `getObjects` failures silently producing an empty tree — errors are now reported to the webview so the problem is visible instead of appearing as an empty database\
+  修复 `getObjects` 失败时静默展示空树 — 错误现上报至 Webview，不再误显为“空库”
 
 ### Changed
 
-- Updated the `clearCache` command label to accurately describe its behavior (clears the read-only table list) and added a toast notification on completion\
-  更新 `clearCache` 命令标签以准确描述其行为（清空只读表列表），并在完成时弹出提示
+- Updated the `clearCache` command to honestly report how many read-only table protections were removed (and show a notice even when the list is already empty), with bilingual i18n keys\
+  更新 `clearCache` 命令如实提示移除了几个受保护表（空列表时同样提示），双语 i18n 键已补齐
 
 ---
 

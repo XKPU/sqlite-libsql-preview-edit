@@ -534,6 +534,16 @@ export type HostRequest =
       filePath: string;
       format: ImportFormat;
     })
+  /**
+   * Ask the host to show a native open dialog and return the chosen path.
+   *
+   * A webview cannot open a file picker (`window.prompt` returns null inside
+   * VS Code), so the dialog must run on the extension host. Dismissal is a
+   * normal outcome, reported as an empty path rather than an error.
+   */
+  | (HostRequestBase & {
+      type: 'pickImportFile';
+    })
   | (HostRequestBase & {
       type: 'importCommit';
       options: ImportOptions;
@@ -646,6 +656,12 @@ export type HostResponse =
    */
   | { id: number; type: 'exportCancelled'; format: ExportFormat }
   | { id: number; type: 'importPreview'; mappings: ImportFieldMapping[]; previewRows: SqlValue[][]; headers: string[] }
+  /**
+   * Reply to a `pickImportFile` request: the path the user chose in the native
+   * open dialog, or an empty string when the dialog was dismissed. The path is
+   * never validated here — `importPreview` reports an unreadable file itself.
+   */
+  | { id: number; type: 'importFilePicked'; path: string }
   | { id: number; type: 'imported'; rows: number; skipped: number; tableName: string }
   | { id: number; type: 'objectDeleted'; name: string; objectType: ObjectType }
   | { id: number; type: 'closed' }

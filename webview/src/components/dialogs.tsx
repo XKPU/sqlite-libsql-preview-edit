@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 K_PU
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ExportFormat, ImportFieldMapping, SqlValue } from '../../../src/shared/protocol';
 import { bytesToHex, isNull, SQLITE_CAPABILITIES } from '../../../src/shared/protocol';
 import type { NewTableField, NewTableOptions } from '../../../src/shared/ddl';
@@ -124,14 +124,21 @@ export const ImportDialog: React.FC<ImportDialogProps> = ({ state, open, onClose
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset only when the dialog opens. `state` is deliberately NOT a dependency:
+  // it is a fresh object every render (all hook returns are), so listing it made
+  // this effect run after every render and immediately wipe the preview the
+  // user had just loaded. The bridge identity is permanent (see useWebview), so
+  // calling through it here cannot go stale.
+  const stateRef = useRef(state);
+  stateRef.current = state;
   useEffect(() => {
     if (open) {
       setFormat('csv');
       setFilePath('');
       setError(null);
-      state.cancelImport();
+      stateRef.current.cancelImport();
     }
-  }, [open, state]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -139,13 +146,15 @@ export const ImportDialog: React.FC<ImportDialogProps> = ({ state, open, onClose
     setPicking(true);
     setError(null);
     try {
-      // The host handles file picker via executeSql? No - we use a
-      // dedicated dialog through host. But our protocol only has
-      // importPreview which requires filePath. Use a fallback: prompt
-      // via a simple modal input for the path.
-      const path = window.prompt('Enter the file path (or leave empty to cancel):');
+      // The host shows the native open dialog: a webview cannot open a file
+      // picker itself (`window.prompt` returns null inside VS Code). An empty
+      // path means the user dismissed the dialog — a normal outcome, silent
+      // like any other cancelled dialog.
+      const path = await state.pickImportFile();
       if (!path) return;
-      setFilePath(path.trim());
+      setFilePath(path);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setPicking(false);
     }

@@ -340,7 +340,11 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
           respond({ id: msg.id, type: 'languageChanged', language: this.state.language, settings: this.state.getWebviewSettings() });
           return;
         case 'openSettings':
-          await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:u-eptm.sqlite-libsql-preview-edit');
+          // `workbench.action.openSettings` needs no reply, but the webview's
+          // bridge awaits one — a request that is never answered reads as a
+          // 120-second stall followed by "The extension host did not respond."
+          await vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${this.context.extension.id}`);
+          respond({ id: msg.id, type: 'closed' });
           return;
         case 'getInfo':
           await answer(
@@ -414,7 +418,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
             async () => {
               // Ask where to save BEFORE doing the work: a cancelled dialog must
               // not leave a half-written file or waste a full table scan.
-              const dest = await this.askExportPath(msg.format, msg.objectName);
+              const dest = await this.askExportPath(msg.format, msg.objectName, panel);
               if (!dest) return { cancelled: true } as const;
               return adapter.export(msg.format, msg.objectName, msg.selectSql, dest);
             },
@@ -433,7 +437,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
         case 'exportDatabase':
           await answer(
             async () => {
-              const dest = await this.askExportPath(msg.format);
+              const dest = await this.askExportPath(msg.format, undefined, panel);
               if (!dest) return { cancelled: true } as const;
               return adapter.exportDatabase(msg.format, dest);
             },
@@ -461,6 +465,13 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
             })
           );
           return;
+        case 'pickImportFile': {
+          // Dismissal is a normal outcome, signalled as an empty path — an
+          // error would make the webview treat "user cancelled" as a failure.
+          const picked = await this.askImportPath(panel);
+          respond({ id: msg.id, type: 'importFilePicked', path: picked ?? '' });
+          return;
+        }
         case 'importCommit':
           await answer(
             () =>
@@ -469,7 +480,9 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
                 msg.options.tableName,
                 msg.options.mappings,
                 msg.options.conflict,
-                msg.options.createTable
+                msg.options.createTable,
+                // The user's explicit format choice, not the file extension.
+                msg.options.format
               ),
             (r) => ({
               id: msg.id,
@@ -552,6 +565,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
           } catch (e: unknown) {
             this.logger.error(`reopen threw: ${e instanceof Error ? e.message : String(e)}`);
           }
+          respond({ id: msg.id, type: 'closed' });
           return;
         }
         default: {
@@ -615,16 +629,20 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
    * Returns `undefined` when the user dismisses the dialog, so the caller can
    * tell "cancelled" apart from "failed" and avoid writing anything at all.
    */
-  private async askExportPath(format: ExportFormat, objectName?: string): Promise<string | undefined> {
+  private async askExportPath(
+    format: ExportFormat,
+    objectName?: string,
+    panel?: vscode.WebviewPanel
+  ): Promise<string | undefined> {
     // Suggested name: the object being exported, else the database file's own
     // name, so the default is meaningful instead of a generic "database.sql".
-    const stem = objectName ?? this.dbFileStem() ?? 'database';
+    const stem = objectName ?? this.dbFileStem(panel) ?? 'database';
     const filters: Record<string, string[]> =
       format === 'sql' ? { SQL: ['sql'] } : format === 'json' ? { JSON: ['json'] } : { CSV: ['csv'] };
 
     const picked = await vscode.window.showSaveDialog({
       title: `Export ${objectName ?? 'database'}`,
-      defaultUri: vscode.Uri.file(path.join(this.exportDefaultDir(), `${stem}.${format}`)),
+      defaultUri: vscode.Uri.file(path.join(this.exportDefaultDir(panel), `${stem}.${format}`)),
       filters,
       saveLabel: 'Export'
     });
@@ -632,20 +650,53 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
   }
 
   /** Open database's directory, so the save dialog starts somewhere relevant. */
-  private exportDefaultDir(): string {
-    const uri = this.activeDocumentUri();
+  private exportDefaultDir(panel?: vscode.WebviewPanel): string {
+    const uri = this.activeDocumentUri(panel);
     return uri ? path.dirname(uri.fsPath) : os.homedir();
   }
 
+  /**
+   * Native open dialog for the import flow.
+   *
+   * A webview has no file picker (`window.prompt` is a no-op returning null
+   * inside VS Code), so picking an import file has to happen here. The dialog
+   * starts in the open database's directory: the most likely place for the
+   * user's CSV/JSON source.
+   */
+  private async askImportPath(panel?: vscode.WebviewPanel): Promise<string | undefined> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      openLabel: this.state.i18n.t('import.pickOpenLabel'),
+      defaultUri: this.activeDocumentUri(panel),
+      filters: { 'Data files': ['csv', 'json', 'txt'] }
+    });
+    return picked?.[0]?.fsPath;
+  }
+
   /** Open database's file name without its extension, or undefined. */
-  private dbFileStem(): string | undefined {
-    const uri = this.activeDocumentUri();
+  private dbFileStem(panel?: vscode.WebviewPanel): string | undefined {
+    const uri = this.activeDocumentUri(panel);
     return uri ? path.basename(uri.fsPath, path.extname(uri.fsPath)) : undefined;
   }
 
-  private activeDocumentUri(): vscode.Uri | undefined {
-    if (!this.lastActivePanel) return undefined;
-    return this.sessions.get(this.lastActivePanel)?.document.uri;
+  /**
+   * The document URI of the panel the request came from.
+   *
+   * `lastActivePanel` records whichever editor was last *focused*, which is not
+   * necessarily the one that sent this message — with two database tabs open,
+   * exporting from the unfocused one used to suggest the other file's name and
+   * directory. The sending panel is always the more precise answer when known.
+   */
+  private activeDocumentUri(panel?: vscode.WebviewPanel): vscode.Uri | undefined {
+    if (panel && this.sessions.has(panel)) {
+      return this.sessions.get(panel)!.document.uri;
+    }
+    if (this.lastActivePanel && this.sessions.has(this.lastActivePanel)) {
+      return this.sessions.get(this.lastActivePanel)!.document.uri;
+    }
+    return undefined;
   }
 
   private deleteTitle(type: ObjectType, name: string): string {
@@ -712,16 +763,24 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
     }
     const objects = await session.adapter.getObjects(true);
     if (isError(objects)) {
+      // An empty object list and a failed object list look identical in the
+      // tree — the user would see "no tables" for a database that is full of
+      // them. Report the failure as an error response instead of a silent
+      // empty snapshot; the webview surfaces it as a toast/banner.
       this.logger.warn(`getObjects failed (${objects.code}): ${objects.message}`);
+      this.postMessage(session.panel, {
+        id,
+        type: 'error',
+        error: { code: objects.code, message: objects.message, raw: objects.raw }
+      });
+      return;
     }
-    this.logger.info(
-      `sending ready snapshot (request id=${id}): ${isError(objects) ? 0 : objects.length} object(s)`
-    );
+    this.logger.info(`sending ready snapshot (request id=${id}): ${objects.length} object(s)`);
     this.postMessage(session.panel, {
       id,
       type: 'ready',
       info,
-      objects: isError(objects) ? [] : objects,
+      objects,
       settings: this.state.getWebviewSettings(),
       protocolVersion: PROTOCOL_VERSION
     });
