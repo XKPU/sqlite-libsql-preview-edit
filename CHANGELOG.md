@@ -1,6 +1,6 @@
 # SQLite/LibSQL/Turso Preview&Edit
 
-## [Unreleased]
+## [0.0.6]
 
 ### Added
 
@@ -186,8 +186,9 @@
 
 ## [v0.0.1] - 2026-10-03
 
-[Unreleased]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.6...HEAD
 
+[v0.0.6]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.5...v0.0.6
 [v0.0.5]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.4...v0.0.5
 [v0.0.4]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.3...v0.0.4
 [v0.0.3]: https://github.com/XKPU/sqlite-libsql-preview-edit/compare/v0.0.2...v0.0.3
