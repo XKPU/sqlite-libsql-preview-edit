@@ -137,18 +137,18 @@ Turso 版本字符串**先于** LibSQL 检测，因为 LibSQL 的匹配模式也
 AI 的使用不改变本项目的开源许可证及第三方条款。
 
 以下为中奖名单（以使用量排名）：
-- DeepSeek v4.1 Flash
 - GLM 5.3 Flash
-- GLM 5.3
-- DeepSeek v4 Pro
-- MiMo V2.6 Flash
+- DeepSeek v4.1 Flash
 - GPT 6.1 Sol
-- Kimi K3
-- Hy4 preview
+- DeepSeek v4 Pro
+- GLM 5.3
 - GPT 6 Astra
+- MiMo V2.6 Flash
+- Kimi K3
+- Claude Opus 5.5
+- Hy4 preview
 - GLM 5.2
 - Hy3
-- Claude Opus 5.5
 
 ## 支持
 

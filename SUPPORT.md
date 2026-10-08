@@ -32,7 +32,16 @@ Only four architectures are supported. See [Driver](README.md#driver) in the REA
 | macOS | Apple silicon (`arm64`) |
 | Linux | x64, `arm64` (glibc) |
 
-macOS Intel, Alpine/musl, and Windows `arm64` are not supported. The bundled engine does ship binaries for them, but the extension has never advertised or tested those platforms, so no VSIX is built for them.
+#### Using a macOS Intel machine
+
+Package the VSIX yourself.
+
+1. Install [Node.js](https://nodejs.org/) 20 or newer and npm (both ship with Node).
+2. Get the source: `git clone https://github.com/XKPU/sqlite-libsql-preview-edit.git`, then `cd sqlite-libsql-preview-edit`.
+3. Install dependencies: `npm install`.
+4. Build the extension and the webview: `npm run compile`.
+5. Package the VSIX: `node node_modules/@vscode/vsce/vsce package --target darwin-x64` (or add `vsce` to your PATH and run `vsce package --target darwin-x64`). The output is `sqlite-libsql-preview-edit-<version>-darwin-x64.vsix` in the project root.
+6. Install it: **Extensions view → … menu → Install from VSIX…**, or `code --install-extension sqlite-libsql-preview-edit-<version>-darwin-x64.vsix`.
 
 ### A lock conflict: "database is locked"
 
@@ -47,17 +56,6 @@ Installing or upgrading does not restart a window that is already open. Run **De
 ### The reported dialect looks wrong
 
 `.db`, `.sqlite`, `.sqlite3`, `.libsql`, and `.turso` are all supported. The **driver** is always the bundled native engine (`libsql`, the libSQL C fork of SQLite); the **dialect** reports what the file contains, not which implementation is loaded. See [Driver vs dialect](README.md#driver-vs-dialect).
-
-### Using a macOS Intel machine
-
-No VSIX is packaged for macOS Intel (`darwin-x64`), because that platform is neither advertised nor tested. The engine does ship a `darwin-x64` binary, so you can package a VSIX yourself and it will work on your machine:
-
-1. Install [Node.js](https://nodejs.org/) 20 or newer and npm (both ship with Node).
-2. Get the source: `git clone https://github.com/XKPU/sqlite-libsql-preview-edit.git`, then `cd sqlite-libsql-preview-edit`.
-3. Install dependencies — this also downloads the `darwin-x64` engine binary: `npm install`.
-4. Build the extension and the webview: `npm run compile`.
-5. Package the VSIX: `node node_modules/@vscode/vsce/vsce package --target darwin-x64` (or add `vsce` to your PATH and run `vsce package --target darwin-x64`). The output is `sqlite-libsql-preview-edit-<version>-darwin-x64.vsix` in the project root.
-6. Install it: **Extensions view → … menu → Install from VSIX…**, or `code --install-extension sqlite-libsql-preview-edit-<version>-darwin-x64.vsix`.
 
 You can verify the package before installing: `node scripts/verify-vsix.js sqlite-libsql-preview-edit-<version>-darwin-x64.vsix`.
 

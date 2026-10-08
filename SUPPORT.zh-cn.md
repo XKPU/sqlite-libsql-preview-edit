@@ -32,7 +32,16 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 | macOS | Apple 芯片（`arm64`） |
 | Linux | x64、`arm64`（glibc） |
 
-Intel macOS、Alpine/musl 以及 Windows `arm64` 不受支持。内置引擎确实为它们提供了二进制，但本扩展从未宣称支持、也未测试过这些平台，因此不会为它们构建 VSIX。
+#### 在 Intel 芯片的 macOS 上使用
+
+请自行打包 VSIX。
+
+1. 安装 [Node.js](https://nodejs.org/) 20 或更新版本（npm 随 Node 一起提供）。
+2. 获取源码：`git clone https://github.com/XKPU/sqlite-libsql-preview-edit.git`，进入目录 `cd sqlite-libsql-preview-edit`。
+3. 安装依赖：`npm install`。
+4. 构建扩展与 webview：`npm run compile`。
+5. 打包 VSIX：`node node_modules/@vscode/vsce/vsce package --target darwin-x64`（或将 `vsce` 加入 PATH 后运行 `vsce package --target darwin-x64`）。输出为项目根目录下的 `sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
+6. 安装：**扩展视图 → … 菜单 → 从 VSIX 安装…**，或执行 `code --install-extension sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
 
 ### 锁冲突：提示 "database is locked"
 
@@ -47,17 +56,6 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` 不受支持。内置引擎确�
 ### 显示出的方言不对
 
 `.db`、`.sqlite`、`.sqlite3`、`.libsql`、`.turso` 均受支持。**驱动**始终是内置的原生引擎（`libsql`，即 SQLite 的 libSQL C 分支）；**方言**表示文件内容，而非实际加载的实现。详见[驱动与方言](README.zh-cn.md#驱动与方言)。
-
-### 在 Intel 芯片的 macOS 上使用
-
-官方不为 macOS Intel（`darwin-x64`）打包 VSIX，因为该平台既未宣称支持、也未经过测试。引擎本身提供 `darwin-x64` 二进制，因此你可以自行打包 VSIX，它可以在你的机器上正常工作：
-
-1. 安装 [Node.js](https://nodejs.org/) 20 或更新版本（npm 随 Node 一起提供）。
-2. 获取源码：`git clone https://github.com/XKPU/sqlite-libsql-preview-edit.git`，然后 `cd sqlite-libsql-preview-edit`。
-3. 安装依赖 —— 这一步会同时下载 `darwin-x64` 引擎二进制：`npm install`。
-4. 构建扩展与 webview：`npm run compile`。
-5. 打包 VSIX：`node node_modules/@vscode/vsce/vsce package --target darwin-x64`（或将 `vsce` 加入 PATH 后运行 `vsce package --target darwin-x64`）。输出为项目根目录下的 `sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
-6. 安装：**扩展视图 → … 菜单 → 从 VSIX 安装…**，或执行 `code --install-extension sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
 
 安装前可以先校验包内容：`node scripts/verify-vsix.js sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
 
