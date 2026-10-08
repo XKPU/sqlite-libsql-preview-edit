@@ -36,7 +36,7 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` 不受支持。内置引擎确�
 
 ### 锁冲突：提示 "database is locked"
 
-引擎为原生 SQLite，采用 **normal** 锁模式，因此与其他进程协作而非排斥：其他程序打开数据库时仍可正常读写，WAL 与 rollback-journal 模式皆然。（此前的引擎以 `locking_mode = exclusive` 打开文件，即使在 WAL 下也会阻塞所有其他进程 —— 此问题已修复。）
+引擎为 SQLite（经由 libSQL C 分支），采用 **normal** 锁模式，因此与其他进程协作而非排斥：其他程序打开数据库时仍可正常读写，WAL 与 rollback-journal 模式皆然。（此前的引擎以 `locking_mode = exclusive` 打开文件，即使在 WAL 下也会阻塞所有其他进程 —— 此问题已修复。）
 
 若其他程序正处于事务中，扩展只会短暂等待锁（250 毫秒），随后以明确的 `database is locked` 错误失败，而不会把没写成功的事情报成成功。等待更久并无帮助：若某服务一直持着未提交的事务，无论预算多大结果都相同，短等待只是免去你的卡顿。待对方进程结束后重试即可。只读模式（`libSqlPreviewEdit.readOnly`）则完全不会获取写锁。
 
@@ -46,7 +46,20 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` 不受支持。内置引擎确�
 
 ### 显示出的方言不对
 
-`.db`、`.sqlite`、`.sqlite3`、`.libsql`、`.turso` 均受支持。**驱动**始终是内置的原生 SQLite 引擎（`better-sqlite3`）；**方言**表示文件内容，而非实际加载的实现。详见[驱动与方言](README.zh-cn.md#驱动与方言)。
+`.db`、`.sqlite`、`.sqlite3`、`.libsql`、`.turso` 均受支持。**驱动**始终是内置的原生引擎（`libsql`，即 SQLite 的 libSQL C 分支）；**方言**表示文件内容，而非实际加载的实现。详见[驱动与方言](README.zh-cn.md#驱动与方言)。
+
+### 在 Intel 芯片的 macOS 上使用
+
+官方不为 macOS Intel（`darwin-x64`）打包 VSIX，因为该平台既未宣称支持、也未经过测试。引擎本身提供 `darwin-x64` 二进制，因此你可以自行打包 VSIX，它可以在你的机器上正常工作：
+
+1. 安装 [Node.js](https://nodejs.org/) 20 或更新版本（npm 随 Node 一起提供）。
+2. 获取源码：`git clone https://github.com/XKPU/sqlite-libsql-preview-edit.git`，然后 `cd sqlite-libsql-preview-edit`。
+3. 安装依赖 —— 这一步会同时下载 `darwin-x64` 引擎二进制：`npm install`。
+4. 构建扩展与 webview：`npm run compile`。
+5. 打包 VSIX：`node node_modules/@vscode/vsce/vsce package --target darwin-x64`（或将 `vsce` 加入 PATH 后运行 `vsce package --target darwin-x64`）。输出为项目根目录下的 `sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
+6. 安装：**扩展视图 → … 菜单 → 从 VSIX 安装…**，或执行 `code --install-extension sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
+
+安装前可以先校验包内容：`node scripts/verify-vsix.js sqlite-libsql-preview-edit-<版本>-darwin-x64.vsix`。
 
 ### 出错了，我需要详细日志
 

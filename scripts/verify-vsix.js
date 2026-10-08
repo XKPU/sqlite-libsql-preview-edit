@@ -12,17 +12,20 @@
  *
  * Checks:
  *   1. the archive carries no `node_modules` beyond the runtime packages
- *      that `.vscodeignore` deliberately re-includes (`better-sqlite3`, required
- *      by `require('better-sqlite3')` at runtime) and no stray files, and that
- *      the engine's native `prebuilds/` binaries survived while its build-time
- *      sources did not
+ *      that `.vscodeignore` deliberately re-includes (`libsql` + its binary
+ *      package `@libsql/<target>` + `@neon-rs/load` + `detect-libc`, which
+ *      `require('libsql')` resolves at runtime) and no stray files, and that
+ *      the engine's per-platform binary survived
  *   2. no removed WASM engine is shipped: neither the vendored `out/vendor`
  *      payload nor an `sql.js` module may appear in the archive
  *   3. the native adapter opens, creates, writes, reads, and closes a DB
  *   4. the on-disk file carries a real SQLite header
  *   5. a corrupt file is classified as DB_CORRUPT rather than UNKNOWN
+ *   6. no removed engine (`better-sqlite3`, `@tursodatabase/database`) ships,
+ *      and the driver answering queries is the libsql one — the assertion that
+ *      catches the shipped build silently resolving a different engine
  *
- * Run: node scripts/verify-vsix.js
+ * Run: node scripts/verify-vsix.js [path/to/extension-target.vsix]
  */
 'use strict';
 const assert = require('node:assert/strict');
@@ -93,12 +96,15 @@ console.log(`extracted with ${extractor}: ${vsix}\n  -> ${work}\n`);
 /* --------------------------- contents are clean -------------------------- */
 
 check('the archive carries no unexpected node_modules', () => {
-  // `better-sqlite3` — the SQLite engine, including every platform's prebuilt
-  // binary under its `prebuilds/` directory — is re-included on purpose by
-  // `.vscodeignore`: the extension requires `better-sqlite3` at runtime. It is
-  // the ONLY runtime dependency, so any other module under `node_modules` means
-  // the package is shipping dev deps (or leftovers from a previous engine).
-  const ALLOWED = new Set(['better-sqlite3']);
+  // The engine's runtime closure is re-included on purpose by `.vscodeignore`:
+  //   libsql            the engine JS (loader + auth + error types)
+  //   @libsql/<target>  the per-platform native binary (pruned to one per VSIX)
+  //   @neon-rs/load     resolves the binary path at require time
+  //   detect-libc       musl vs glibc detection for the Linux binary remap
+  // These are the ONLY modules `require('libsql')` can reach, so any other
+  // module under `node_modules` means the package is shipping dev deps (or
+  // leftovers from a previous engine).
+  const ALLOWED = new Set(['libsql', '@libsql', '@neon-rs', 'detect-libc']);
   const found = [];
   (function walk(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -111,36 +117,36 @@ check('the archive carries no unexpected node_modules', () => {
       }
     }
   })(ext);
-  assert.deepEqual(found, [], 'a VSIX may only ship the better-sqlite3 runtime module');
+  assert.deepEqual(found, [], 'a VSIX may only ship the libsql runtime modules');
 });
 
-check('the archive ships the engine native prebuilds', () => {
-  // The one thing a pruned `node_modules` can silently break. `better-sqlite3`
-  // resolves `prebuilds/<platform>-<arch>.node` at require time, and `.vscodeignore`
-  // excludes the package's build-time sources — so if the `prebuilds` re-include
-  // ever stops working, the VSIX still builds and every user gets a load failure.
-  // Assert the directory exists and holds at least one binary per platform.
-  const prebuilds = path.join(ext, 'node_modules/better-sqlite3/prebuilds');
-  assert.ok(fs.existsSync(prebuilds), 'node_modules/better-sqlite3/prebuilds missing');
-  const bins = fs.readdirSync(prebuilds).filter((f) => f.endsWith('.node'));
-  assert.ok(bins.length > 0, 'no .node prebuilt binaries shipped');
-  for (const required of ['win32-x64', 'darwin-arm64', 'linux-x64', 'linux-arm64']) {
-    assert.ok(
-      bins.includes(`${required}.node`),
-      `prebuild for ${required} is missing from the package (found: ${bins.join(', ')})`
-    );
-  }
+check('the archive ships exactly one engine binary package', () => {
+  // The one thing a pruned `node_modules` can silently break. The loader in
+  // `node_modules/libsql/index.js` resolves `@libsql/<target>` at require time;
+  // this VSIX must carry exactly one binary package (its own target's), with an
+  // `index.node` actually inside — if the re-include ever stops working, the
+  // VSIX still builds and every user gets a load failure.
+  const scope = path.join(ext, 'node_modules/@libsql');
+  assert.ok(fs.existsSync(scope), 'node_modules/@libsql missing');
+  const packages = fs.readdirSync(scope).filter((d) =>
+    fs.existsSync(path.join(scope, d, 'index.node'))
+  );
+  assert.equal(packages.length, 1, `exactly one @libsql binary must ship (found: ${packages.join(', ')})`);
+  assert.ok(
+    fs.statSync(path.join(scope, packages[0], 'index.node')).size > 1024 * 1024,
+    'the shipped index.node is implausibly small to be a real engine binary'
+  );
 });
 
-check('the archive ships no engine build-time sources', () => {
-  // `deps/` (vendored SQLite C sources) and `src/` only exist so npm can compile
-  // from scratch; every supported platform ships a prebuild instead. Shipping them
-  // would add ~5.4 MB of dead weight, so the `.vscodeignore` excludes must hold.
-  for (const dir of ['deps', 'src']) {
-    const excluded = path.join(ext, 'node_modules/better-sqlite3', dir);
+check('the archive ships no removed engine', () => {
+  // better-sqlite3 (the previous driver) and @tursodatabase/database (the
+  // rejected Rust rewrite) must be gone — their presence would mean the
+  // adapter's require would silently resolve a different engine than the one
+  // the capability panel reports.
+  for (const gone of ['better-sqlite3', '@tursodatabase']) {
     assert.ok(
-      !fs.existsSync(excluded),
-      `node_modules/better-sqlite3/${dir} must not be packaged (build-time only)`
+      !fs.existsSync(path.join(ext, 'node_modules', gone)),
+      `the removed engine ${gone} is still shipped`
     );
   }
 });
@@ -252,14 +258,14 @@ function runAdapterChecks() {
 
 runAdapterChecks()
   .then((results) => {
-    check('the native SQLite engine opens a new database', () => {
+    check('the native libsql engine opens a new database', () => {
       assert.ok(results.open && !results.open.code, `open failed: ${JSON.stringify(results.open)}`);
       // Exact match, not just "non-empty": this is the assertion that would
       // catch the shipped build resolving a different engine than intended.
       assert.equal(
         results.open.driver,
-        'better-sqlite3',
-        'the better-sqlite3 driver must be the one running queries'
+        'libsql',
+        'the libsql driver must be the one running queries'
       );
     });
 

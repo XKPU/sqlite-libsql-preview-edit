@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: 2026 K_PU
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Prove the native SQLite engine for the CURRENT platform loads and can open a
- * real database file.
+ * Prove the native engine for the CURRENT platform loads and can open a real
+ * database file.
  *
- * Why this exists: the extension ships `better-sqlite3`, which resolves a
- * platform-specific prebuilt binary (`prebuilds/<platform>-<arch>.node`) at run
- * time. If a packaging step drops the wrong one — or the package is pruned so
- * aggressively that the prebuilds directory does not survive — the VSIX builds
- * fine and fails for every user. This script fails the build instead.
+ * Why this exists: the extension ships the `libsql` npm package, which resolves
+ * a platform-specific binary (`node_modules/@libsql/<target>/index.node`) at
+ * require time via `@neon-rs/load`. If a packaging step drops the wrong one —
+ * or the package is pruned so aggressively that the binary does not survive —
+ * the VSIX builds fine and fails for every user. This script fails the build
+ * instead.
  *
  * It deliberately uses the SAME entry point the extension uses — the compiled
  * adapter — so a broken factory or a changed client API is caught here too.
@@ -100,40 +101,40 @@ if (!exported) {
 }
 
 /**
- * Report which prebuilt binary this platform will load, for the log.
+ * Report which engine binary this platform will load, for the log.
  *
- * `better-sqlite3` picks the binary itself from `process.platform`/`process.arch`
- * (and musl detection on Linux), so the useful fact is not which optional package
- * got installed but WHICH prebuild resolves — and whether it is actually present.
- * A missing prebuild is the failure this script exists to catch, so it is reported
- * explicitly rather than left to a require() stack trace.
+ * `libsql` picks the binary via `@neon-rs/load`'s currentTarget() (with a
+ * musl→gnu remap on Linux), so the useful fact is not which optional package
+ * got installed but WHICH binary resolves — and whether it is actually present.
+ * A missing binary is the failure this script exists to catch, so it is
+ * reported explicitly rather than left to a require() stack trace.
  */
 function describeRuntime() {
   const lines = [];
 
-  let pkgPath = null;
-  try {
-    pkgPath = require.resolve('better-sqlite3/package.json', { paths: [root] });
-  } catch {
-    lines.push('better-sqlite3 -> (not installed)');
+  let pkgPath = path.join(root, 'node_modules', 'libsql', 'package.json');
+  if (!fs.existsSync(pkgPath)) {
+    lines.push('libsql -> (not installed)');
     return lines;
   }
-  lines.push(`better-sqlite3 -> ${path.relative(root, pkgPath)}`);
+  // NOTE: `require.resolve('libsql/package.json')` cannot be used here — the
+  // package's `exports` map does not export `./package.json`, so Node answers
+  // ERR_PACKAGE_PATH_NOT_EXPORTED even though the file exists.
+  lines.push(`libsql -> ${path.relative(root, pkgPath)}`);
 
-  // `lib/binding.js` exposes the same resolver the addon uses at require time,
-  // so asking it is a stronger check than recomputing the path ourselves.
+  // `@neon-rs/load` exposes the same target computation the loader uses at
+  // require time, so asking it is a stronger check than recomputing the path.
   try {
-    const binding = require(path.join(path.dirname(pkgPath), 'lib', 'binding.js'));
-    if (typeof binding.getPrebuildPath === 'function') {
-      const prebuild = binding.getPrebuildPath();
-      lines.push(
-        prebuild
-          ? `prebuild       -> ${path.relative(root, prebuild)}`
-          : `prebuild       -> (none for ${process.platform}-${process.arch}; would build from source)`
-      );
-    }
+    const load = require('@neon-rs/load');
+    const target = load.currentTarget();
+    const binary = path.join(root, 'node_modules', '@libsql', target, 'index.node');
+    lines.push(
+      fs.existsSync(binary)
+        ? `binary       -> ${path.relative(root, binary)}`
+        : `binary       -> MISSING for target "${target}" (${process.platform}-${process.arch})`
+    );
   } catch {
-    lines.push('prebuild       -> (could not resolve lib/binding.js)');
+    lines.push('binary       -> (could not resolve @neon-rs/load target)');
   }
   return lines;
 }

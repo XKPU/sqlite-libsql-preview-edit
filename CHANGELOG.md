@@ -45,8 +45,8 @@
   修复“复制行”按钮永远复制第 0 行而非当前编辑行
 - Fixed the column filter dropdown offering useless options and containing a dead expression (`disabled={readOnly ? false : false}`)\
   修复列过滤器下拉选项无用且包含恒等死表达式
-- Fixed `true`/`false` input producing JavaScript booleans that `better-sqlite3` rejects — now converted to `1`/`0`\
-  修复 `true`/`false` 输入产生 `better-sqlite3` 拒绝绑定的布尔值 — 现转为 `1`/`0`
+- Fixed `true`/`false` input producing JavaScript booleans the engine rejects — now converted to `1`/`0`\
+  修复 `true`/`false` 输入产生引擎拒绝绑定的布尔值 — 现转为 `1`/`0`
 - Fixed `normalizeValue` silently dropping `byteOffset`/`byteLength` when wrapping `ArrayBuffer` views\
   修复 `normalizeValue` 包装 `ArrayBuffer` 视图时丢弃 `byteOffset`/`byteLength`
 - Fixed the per-request 120-second timeout timer never being cleared after the response arrived\
@@ -78,6 +78,12 @@
 
 ### Changed
 
+- Replaced the `better-sqlite3` native driver with `libsql` (the libSQL C fork of SQLite, as an npm module) — the only runtime engine, with no fallback. LibSQL/Turso files gain working `vector_*` functions; the driver value now reports `libsql`\
+  将 `better-sqlite3` 原生驱动替换为 `libsql`（SQLite 的 libSQL C 分支，npm 模块）—— 唯一运行时引擎，无回退。LibSQL/Turso 文件获得可用的 `vector_*` 函数；driver 值现报告为 `libsql`
+- Rewrote per-platform packaging for the libsql driver: one VSIX per target (`win32-x64`, `darwin-arm64`, `linux-x64`, `linux-arm64`), each carrying exactly one `@libsql/<target>` engine binary; `scripts/package-target.js` prunes sibling binaries, `scripts/verify-vsix.js` enforces the one-binary layout, and `scripts/smoke-native.js` loads the compiled adapter against the real binary\
+  针对 libsql 驱动重写分平台打包：每个目标一个 VSIX（`win32-x64`、`darwin-arm64`、`linux-x64`、`linux-arm64`），各自恰好携带一个 `@libsql/<target>` 引擎二进制；`scripts/package-target.js` 负责裁剪同级二进制，`scripts/verify-vsix.js` 强制单二进制布局，`scripts/smoke-native.js` 用真实二进制加载编译后的适配器
+- Rewrote the release workflow for the same targets with an engine-binary precheck and VSIX verification on each runner; macOS Intel (`darwin-x64`) is deliberately not packaged — SUPPORT.md now includes a self-packaging tutorial\
+  重写发布工作流（相同目标平台），每个 runner 增加引擎二进制预检与 VSIX 校验；macOS Intel（`darwin-x64`）明确不打包 —— SUPPORT.md 新增自行打包教程
 - Updated the `clearCache` command to honestly report how many read-only table protections were removed (and show a notice even when the list is already empty), with bilingual i18n keys\
   更新 `clearCache` 命令如实提示移除了几个受保护表（空列表时同样提示），双语 i18n 键已补齐
 

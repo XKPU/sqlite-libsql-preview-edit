@@ -144,7 +144,7 @@ export interface DatabaseInfo {
   /**
    * Name of the driver implementation running the queries. Distinct from
    * `engine`: the driver is the implementation, the engine is the dialect the
-   * file is written in. Either `turso` or `better-sqlite3`.
+   * file is written in. Either `turso` or `libsql`.
    */
   driver: string;
   /**
@@ -336,37 +336,32 @@ export const TURSO_CAPABILITIES: LibSqlCapabilities = {
  *
  * `driver` decides which engine executes the queries, and the engine — not the
  * dialect label — decides what is executable. Keeping the two separate matters:
- * a `libsql` or `turso` file opened by the stock-SQLite driver is served by an
- * engine that cannot run `CREATE SEQUENCE` or the `vector_*` functions, so
- * reporting the Turso set for it would advertise statements that fail at run
- * time.
+ * a `libsql` or `turso` file opened by an engine that does not implement the
+ * dialect extensions would be advertised statements that fail at run time.
  *
- * The mapping is therefore:
- *   - `better-sqlite3` — always `SQLITE_CAPABILITIES`. The dialect is still
- *     detected and still drives labels, but no dialect may turn a capability
- *     on: binding the detected dialect instead would re-introduce exactly the
- *     over-reporting this function exists to prevent.
- *   - `turso` — the detected dialect's own set, because Turso Database is the
- *     engine that implements them: `turso` files get `TURSO_CAPABILITIES`, and
- *     `libsql` files opened by that engine get `LIBSQL_CAPABILITIES`.
+ * The mapping is:
+ *   - `libsql` (the bundled engine, libSQL's C fork) — the detected dialect's
+ *     own set: `libsql`/`turso` files get `LIBSQL_CAPABILITIES` (the `vector_*`
+ *     functions are implemented in the C fork itself; `CREATE SEQUENCE` is NOT
+ *     part of libSQL and stays false), a plain SQLite file gets the baseline.
+ *   - `turso` — kept for the future Rust-engine driver: dialect's own set
+ *     including `TURSO_CAPABILITIES` for `turso` files.
  *
  * Anything unrecognised falls back to the SQLite baseline, so an unknown driver
  * under-reports rather than promising statements it may not support.
- *
- * With the extension as shipped (only `better-sqlite3` is bundled) every file
- * therefore gets the all-false baseline — this is deliberate, not a stub: the
- * engine that executes the query cannot run `CREATE SEQUENCE` or `vector_*`,
- * and enabling those flags for a dialect label alone made the UI advertise
- * statements that fail at run time. The `driver === 'turso'` branch stays so
- * the mapping is correct the moment the Turso engine is shipped.
  */
 export function capabilitiesForDriver(
   driver: string,
   engine: DbEngine
 ): LibSqlCapabilities {
-  if (driver !== 'turso') return SQLITE_CAPABILITIES;
-  if (engine === 'turso') return TURSO_CAPABILITIES;
-  if (engine === 'libsql') return LIBSQL_CAPABILITIES;
+  if (driver === 'libsql') {
+    if (engine === 'turso' || engine === 'libsql') return LIBSQL_CAPABILITIES;
+    return SQLITE_CAPABILITIES;
+  }
+  if (driver === 'turso') {
+    if (engine === 'turso') return TURSO_CAPABILITIES;
+    if (engine === 'libsql') return LIBSQL_CAPABILITIES;
+  }
   return SQLITE_CAPABILITIES;
 }
 

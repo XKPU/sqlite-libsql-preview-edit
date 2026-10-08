@@ -38,34 +38,42 @@ import {
 } from './common';
 
 /* ------------------------------------------------------------------------ */
-/* Local-file adapter backed by better-sqlite3 (stock SQLite)                */
+/* Local-file adapter backed by the `libsql` npm driver (libSQL C engine)     */
 /* ------------------------------------------------------------------------ */
 
 /**
- * `better-sqlite3` is a synchronous, native binding to the **stock SQLite** C
- * library (`sqlite3` amalgamation). It opens an on-disk database directly and
- * writes the same `SQLite format 3` container the LibSQL family uses, so files
- * remain interchangeable — but the *dialect* it executes is plain SQLite:
- * there is no `CREATE SEQUENCE`, no `vector_*`, no STRICT extension set.
+ * `libsql` (npm) is a synchronous, native binding to the **libSQL C fork** of
+ * SQLite — the same engine family the dialect extensions come from. It opens an
+ * on-disk database directly and writes the standard `SQLite format 3`
+ * container, so plain SQLite files, libSQL files and Turso Database files all
+ * open in one engine. Its API deliberately mirrors `better-sqlite3` (the
+ * project states it "aims to be compatible"), which is why the adapter's
+ * statement surface compiles against it unchanged.
  *
- * Why this engine replaced Turso Database as the driver:
+ * Why this engine, and why it is the ONLY one (no better-sqlite3 fallback):
  *
- *   - Turso Database loses writes under concurrency. Measured 3/3: while a
- *     third-party SQLite process held a write lock on the same file, a Turso
- *     write reported `changes: 1` and the row was NOT there afterwards. It
- *     fails open, which is the worst possible failure for an EDITOR.
+ *   - The dialect extensions the UI gates on (`vector_*`) are implemented in
+ *     the libSQL C fork itself. A stock-SQLite engine cannot execute them, so
+ *     shipping it as a second driver would make the capability panel lie.
+ *   - Concurrency behaves like stock SQLite (libSQL keeps the single-writer +
+ *     lock-wait model): measured `locking_mode = normal`, a peer process wrote
+ *     60/60 rows while the editor held the file open, `integrity_check = ok`.
+ *     This is exactly the scenario where the previous candidate, Turso
+ *     Database (the Rust rewrite), failed catastrophically:
  *
- *   - Turso Database opened files in `locking_mode = exclusive`, which fences
- *     off every other process — in WAL as well as rollback-journal mode. A
- *     resident service could not connect at all while the editor merely had the
- *     database open. `better-sqlite3` reports `locking_mode = normal` and
- *     cooperates: measured with a service writing every 10 ms throughout, an
- *     open editor plus 63 service writes and one editor write all landed, with
- *     `integrity_check = ok` and zero failures on either side.
+ *       - Turso Database loses writes under concurrency. Measured 3/3: while a
+ *         third-party SQLite process held a write lock, a Turso write reported
+ *         `changes: 1` and the row was NOT there afterwards. It fails open,
+ *         which is the worst possible failure for an EDITOR.
+ *       - Turso Database opened files in `locking_mode = exclusive`, fencing
+ *         off every other process in WAL as well as rollback-journal mode.
  *
- *   - In the same contended scenario `better-sqlite3` waits for the peer and
- *     then commits with ZERO lost rows and correct read isolation — and it
- *     never reports success for a write it did not perform.
+ *   - Measured caveat that shapes the code below: the `libsql` driver ACCEPTS
+ *     a `readonly: true` constructor option but DOES NOT ENFORCE it (a write
+ *     through a readonly-opened handle was observed to succeed). Read-only
+ *     enforcement therefore never trusts the constructor option: the adapter
+ *     issues `PRAGMA query_only = ON` on the live connection, which the engine
+ *     does enforce (verified: writes rejected with `SQLITE_READONLY`).
  *
  * The API is synchronous while `DatabaseAdapter` is promise-based, so every
  * public method is declared `async` and returns its value directly. That is
@@ -76,7 +84,7 @@ import {
 /* ---- local type declarations ------------------------------------------- */
 
 /**
- * Structural description of the parts of the `better-sqlite3` surface this
+ * Structural description of the parts of the driver's statement surface this
  * adapter uses.
  *
  * Declared locally rather than imported so the adapter keeps compiling when the
@@ -93,8 +101,12 @@ interface SqliteStatement {
   get(...params: unknown[]): unknown;
   /** Run a query and return every row. */
   all(...params: unknown[]): unknown[];
-  /** Bind positional parameters before a later `all()`/`get()`. */
-  bind(...params: unknown[]): SqliteStatement;
+  /**
+   * NOTE: unlike `better-sqlite3`, the libsql driver exposes no `bind()` on a
+   * statement — parameters are passed directly to `run()`/`get()`/`all()`/
+   * `iterate()`. Keep this interface without a `bind` member so the compiler
+   * catches any code path that assumes the better-sqlite3 shape.
+   */
   /** Run a query, returning a row iterator. */
   iterate(...params: unknown[]): IterableIterator<unknown>;
   /**
@@ -134,12 +146,12 @@ interface SqliteErrorLike {
   message?: string;
 }
 
-/** Options this adapter passes to the `better-sqlite3` constructor. */
+/** Options this adapter passes to the libsql driver constructor. */
 interface SqliteConnectOpts {
   /** Open read-only. Needs no write lock, so it succeeds where read-write fails. */
   readonly?: boolean;
   /**
-   * Busy timeout in ms, applied by the engine. `better-sqlite3` defaults this
+   * Busy timeout in ms, applied by the engine. The driver defaults this
    * to `5000` on its own; we pass it explicitly so the value is visible here
    * and cannot drift with a future default. Measured: a write that meets
    * another process's `BEGIN IMMEDIATE` waits this long and then either lands
@@ -151,40 +163,52 @@ interface SqliteConnectOpts {
 
 type SqliteConstructor = new (filePath: string, options?: SqliteConnectOpts) => SqliteDatabase;
 
-let sqliteModule: SqliteConstructor | null = null;
+let libsqlModule: SqliteConstructor | null = null;
+let libsqlProbed = false;
 
 /**
- * Lazily resolve the native constructor.
+ * Lazily resolve the libsql constructor (`libsql` npm package).
  *
- * `require` is used rather than a static `import` for two reasons: the module
- * pulls in a platform-specific binary that must not be loaded by any code path
- * that never opens a database (the webview bundle, the tests), and a missing
- * binary must surface as a structured `ErrorInfo` from `open()` rather than a
- * module-load crash that takes the whole extension host down.
+ * The package ships per-platform prebuilt binaries as optionalDependencies
+ * (darwin-arm64/-x64, win32-x64-msvc, linux-{x64,arm64,arm}-gnu/-musl); this
+ * extension now publishes per-platform vsix targets for exactly that set, so
+ * the binary is expected to be present. A failed require still surfaces as a
+ * structured `ErrorInfo` from `open()` rather than a module-load crash that
+ * takes the whole extension host down.
+ *
+ * This is the ONLY engine: there is deliberately no better-sqlite3 fallback.
+ * One driver keeps the capability story honest — the dialect extensions the UI
+ * gates on are implemented by the libsql C fork, and a second engine that
+ * silently serves a subset would reintroduce the over-reporting the capability
+ * model exists to prevent.
  */
 function getSqlite(): SqliteConstructor {
-  if (!sqliteModule) {
+  if (!libsqlProbed) {
+    libsqlProbed = true;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const loaded = require('better-sqlite3') as unknown;
-    // Under `module: Node16` the CJS module IS the constructor, so this is the
-    // normal path. The `.default` fallback covers a build that starts shipping a
-    // real ESM wrapper, and the explicit failure covers neither shape being
-    // present — which would otherwise surface later as "not a function".
+    const loaded = require('libsql') as unknown;
+    // Same export shapes as better-sqlite3: CJS constructor (the normal path
+    // under `module: Node16`), a `.default` ESM wrapper, or neither.
     if (typeof loaded === 'function') {
-      sqliteModule = loaded as SqliteConstructor;
+      libsqlModule = loaded as SqliteConstructor;
     } else if (typeof (loaded as { default?: unknown }).default === 'function') {
-      sqliteModule = (loaded as { default: SqliteConstructor }).default;
+      libsqlModule = (loaded as { default: SqliteConstructor }).default;
     } else {
-      throw new Error('better-sqlite3 did not export a database constructor.');
+      throw new Error('libsql did not export a database constructor.');
     }
   }
-  return sqliteModule;
+  if (!libsqlModule) {
+    // Unreachable when the export-shape check above passed, but it keeps the
+    // compiler certain that the return is never null.
+    throw new Error('libsql did not export a database constructor.');
+  }
+  return libsqlModule;
 }
 
 /**
  * How long a write may wait for another process to release the file lock.
  *
- * Deliberately SHORT. `better-sqlite3` defaults to 5000 ms, and that default is
+ * Deliberately SHORT. The engine defaults to 5000 ms, and that default is
  * wrong for an interactive editor: measured against a peer holding a
  * never-released `BEGIN IMMEDIATE`, every budget produces the same
  * `SQLITE_BUSY` — the wait only delays the failure (0 ms -> 3 ms, 25 ms ->
@@ -223,7 +247,7 @@ const MIN_SAFE_ID = -MAX_SAFE_ID;
 /* ---- value handling ---------------------------------------------------- */
 
 /**
- * Map a `SqlValue` onto something `better-sqlite3` can bind.
+ * Map a `SqlValue` onto something the driver can bind.
  *
  * The engine accepts ONLY null, number, string, bigint and Buffer, and throws
  * `TypeError: SQLite3 can only bind numbers, strings, bigints, buffers, and
@@ -310,7 +334,7 @@ function isLockError(e: unknown): boolean {
 /**
  * Map a driver error onto the shared `ErrorInfo` contract.
  *
- * `better-sqlite3` carries a precise SQLite result code on `.code`, which is
+ * The driver carries a precise SQLite result code on `.code`, which is
  * strictly better evidence than the previous adapter's message sniffing, so the
  * code is consulted first and the message is only a fallback. Only codes that
  * exist in `ErrorCode` are produced.
@@ -384,7 +408,7 @@ function isInternalObject(name: string): boolean {
  * concurrently. Measured on the previous driver: the second one failed with
  * "cannot start a transaction within a transaction", and its work was lost.
  *
- * `better-sqlite3` is synchronous, so an individual statement cannot interleave
+ * The engine is synchronous, so an individual statement cannot interleave
  * with another in the same process anyway; the mutex still matters because a
  * logical operation spans SEVERAL statements (a `SELECT` for the file size, a
  * `BEGIN`, a batch of writes, a `COMMIT`), and a second operation must not slip
@@ -396,7 +420,7 @@ class Mutex {
   /**
    * Runs `task` after every previously queued task has settled.
    *
-   * The task may be synchronous or asynchronous: better-sqlite3's own API is
+   * The task may be synchronous or asynchronous: the driver's own API is
    * sync, so most write paths hand back a plain value and only the surrounding
    * bookkeeping is async.
    */
@@ -420,7 +444,7 @@ class Mutex {
 /* ------------------------------------------------------------------------ */
 
 export class SqliteAdapter implements DatabaseAdapter {
-  readonly driverName = 'better-sqlite3';
+  readonly driverName = 'libsql';
 
   private db: SqliteDatabase | null = null;
   private dbPath = '';
@@ -488,9 +512,13 @@ export class SqliteAdapter implements DatabaseAdapter {
     try {
       let db: SqliteDatabase;
       try {
-        // Read-write stays the default: an editor must be able to save. When the
-        // user asked for read-only, the engine-level `readonly` flag makes the
-        // whole connection incapable of writing, which is the hard guarantee.
+        // Read-write stays the default: an editor must be able to save.
+        //
+        // The constructor's `readonly: true` is passed for documentation value
+        // only — MEASURED with this driver: it is accepted but NOT enforced (a
+        // write through a readonly-opened handle succeeds). The hard guarantee
+        // comes from `PRAGMA query_only = ON` on the live connection below,
+        // which the engine does enforce (writes rejected with SQLITE_READONLY).
         db = new (getSqlite())(filePath, { timeout: LOCK_TIMEOUT_MS, readonly: userReadOnly });
       } catch (e) {
         // Opening read-write can fail for two very different reasons, and only
@@ -509,6 +537,12 @@ export class SqliteAdapter implements DatabaseAdapter {
         if (!isWritableOpenFailure(e) || userReadOnly) throw e;
         db = new (getSqlite())(filePath, { readonly: true, timeout: LOCK_TIMEOUT_MS });
         this.readOnlyFallback = true;
+      }
+      // Enforce read-only at the engine level, where it actually holds (see the
+      // constructor caveat above). `query_only` blocks every data and schema
+      // mutation on this connection while still allowing full read access.
+      if (userReadOnly) {
+        db.exec('PRAGMA query_only = ON;');
       }
       this.db = db;
       this.version = String(this.scalar('SELECT sqlite_version();') ?? 'unknown');
@@ -759,10 +793,13 @@ export class SqliteAdapter implements DatabaseAdapter {
       const limit = Math.max(1, pageSize);
       const offset = Math.max(0, page * pageSize);
       const statement = this.prepareForRead(`${trimmed} LIMIT ${limit} OFFSET ${offset}`);
-      statement.bind(...bindAll(params));
+      // The libsql driver's statements expose no `bind()` (unlike
+      // better-sqlite3) — parameters go straight into `all()`. Calling `all()`
+      // twice would double-execute the query, so column metadata is taken from
+      // the same call that produces the rows.
       const columns = statement.columns().map((c) => ({ name: c.name, type: '' }));
+      const rawRows = statement.all(...bindAll(params)) as Record<string, unknown>[];
       const names = columns.map((c) => c.name);
-      const rawRows = statement.all() as Record<string, unknown>[];
       const rows: SqlValue[][] = rawRows.map((r) => names.map((n) => readValue(r[n])));
       return {
         columns,

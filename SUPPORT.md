@@ -36,7 +36,7 @@ macOS Intel, Alpine/musl, and Windows `arm64` are not supported. The bundled eng
 
 ### A lock conflict: "database is locked"
 
-The engine is stock SQLite in **normal** locking mode, so it cooperates with other processes rather than fencing them off: a program that has the database open can keep reading and writing while the extension holds it open, in WAL and rollback-journal mode alike. (The previous engine opened files in `locking_mode = exclusive`, which blocked every other process even in WAL — that is fixed.)
+The engine is SQLite (via the libSQL C fork) in **normal** locking mode, so it cooperates with other processes rather than fencing them off: a program that has the database open can keep reading and writing while the extension holds it open, in WAL and rollback-journal mode alike. (The previous engine opened files in `locking_mode = exclusive`, which blocked every other process even in WAL — that is fixed.)
 
 If another program is mid-transaction, the extension waits only briefly (250 ms) for the lock, then fails with a clear `database is locked` error rather than reporting a success that did not happen. A longer wait does not help: a service that holds a transaction open indefinitely produces the same error whatever the budget, so a short one only spares you the freeze. Retry once the other process finishes. Read-only mode (`libSqlPreviewEdit.readOnly`) avoids taking write locks altogether.
 
@@ -46,7 +46,20 @@ Installing or upgrading does not restart a window that is already open. Run **De
 
 ### The reported dialect looks wrong
 
-`.db`, `.sqlite`, `.sqlite3`, `.libsql`, and `.turso` are all supported. The **driver** is always the bundled native SQLite engine (`better-sqlite3`); the **dialect** reports what the file contains, not which implementation is loaded. See [Driver vs dialect](README.md#driver-vs-dialect).
+`.db`, `.sqlite`, `.sqlite3`, `.libsql`, and `.turso` are all supported. The **driver** is always the bundled native engine (`libsql`, the libSQL C fork of SQLite); the **dialect** reports what the file contains, not which implementation is loaded. See [Driver vs dialect](README.md#driver-vs-dialect).
+
+### Using a macOS Intel machine
+
+No VSIX is packaged for macOS Intel (`darwin-x64`), because that platform is neither advertised nor tested. The engine does ship a `darwin-x64` binary, so you can package a VSIX yourself and it will work on your machine:
+
+1. Install [Node.js](https://nodejs.org/) 20 or newer and npm (both ship with Node).
+2. Get the source: `git clone https://github.com/XKPU/sqlite-libsql-preview-edit.git`, then `cd sqlite-libsql-preview-edit`.
+3. Install dependencies — this also downloads the `darwin-x64` engine binary: `npm install`.
+4. Build the extension and the webview: `npm run compile`.
+5. Package the VSIX: `node node_modules/@vscode/vsce/vsce package --target darwin-x64` (or add `vsce` to your PATH and run `vsce package --target darwin-x64`). The output is `sqlite-libsql-preview-edit-<version>-darwin-x64.vsix` in the project root.
+6. Install it: **Extensions view → … menu → Install from VSIX…**, or `code --install-extension sqlite-libsql-preview-edit-<version>-darwin-x64.vsix`.
+
+You can verify the package before installing: `node scripts/verify-vsix.js sqlite-libsql-preview-edit-<version>-darwin-x64.vsix`.
 
 ### Something failed and I need details
 

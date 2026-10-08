@@ -2,49 +2,45 @@
 # vsce packages everything NOT listed here, so the package contains only:
 #   package.json, package.nls*.json, out/extension/, out/webview/,
 #   icons/, README*.md, SUPPORT*.md, SECURITY*.md, CHANGELOG*.md, LICENSE,
-#   node_modules/better-sqlite3/** (minus its build-time sources).
+#   node_modules/libsql/** (the engine's JS),
+#   node_modules/@libsql/<this platform's binary package>/** (index.node),
+#   node_modules/@neon-rs/load/** and node_modules/detect-libc/**
+#     (libsql's only runtime require dependencies after the binary).
 #
-# The database engine is SQLite itself, via `better-sqlite3`, a NATIVE local-file
-# engine that reads and writes the shared `SQLite format 3` container. sql.js is
-# gone (out/vendor/sqljs/ and node_modules/sql.js must never ship), and so are
-# @libsql/** and libsql/** — replaced wholesale. `@libsql/client-wasm` was also
-# evaluated and rejected: it cannot open a file (absolute paths fail with
-# SQLITE_CANTOPEN and a relative one silently becomes an in-memory DB that never
-# reaches disk).
+# The database engine is the libSQL C fork, via the `libsql` npm package — the
+# ONLY engine (deliberately no better-sqlite3 fallback; see
+# src/extension/adapter/sqliteAdapter.ts). The engine's JS loader
+# (`node_modules/libsql/index.js`) resolves the binary at require time via
+# `@neon-rs/load`'s currentTarget() (with a musl→gnu remap on Linux), then
+# `require('@libsql/<target>')`. Each `@libsql/<target>` package ships exactly
+# one file that matters: `index.node` (plus its own package.json declaring
+# os/cpu, which vsce uses for target pruning).
 #
-# node_modules is excluded by default, but the engine is re-included via the `!`
-# overrides below — the installed extension loads it directly from node_modules.
-#
-# MULTI-PLATFORM: unlike the native engines that publish one optional package per
-# platform, `better-sqlite3` ships EVERY platform's prebuilt binary inside the one
-# package (`prebuilds/<platform>-<arch>.node`, eight of them). A single VSIX
-# therefore serves all of them, and `vsce package --target` is no longer required
-# to produce a working artifact. Resolution happens at require time in
-# `lib/binding.js` from `process.platform` / `process.arch`, with musl detected
-# separately for Linux.
+# MULTI-PLATFORM: unlike better-sqlite3 (which shipped every platform's prebuild
+# inside ONE package and needed a single untargeted VSIX), libsql publishes one
+# optional binary package per platform. The repository therefore builds one VSIX
+# per target (`npm run package:target`), and each VSIX is expected to carry only
+# its own `@libsql/<target>` binary. `vsce package --target <t>` prunes
+# node_modules packages whose os/cpu fields exclude the target platform — which
+# removes the other eight `@libsql/*` binaries automatically; the re-includes
+# below open the gate for node_modules and vsce's target pruning closes it per
+# platform. `scripts/verify-vsix.js` asserts the pruned layout for every target.
 .vscodeignore
 .gitignore
 node_modules/**
-# The engine is re-included by naming the paths it actually needs, NOT by
-# re-including the whole package. This matters: vsce applies these globs with a
-# parent-directory inclusion (`!node_modules/better-sqlite3/**`) winning over any
-# later attempt to exclude a child, so the "include all, then exclude the
-# build-time sources" shape silently shipped ~5.4 MB of C++/C sources. Listing the
-# needed paths positively is the only shape that prunes reliably.
+# The engine JS + its two runtime dependencies are re-included by name; the
+# per-platform binaries are re-included as a group and then pruned by
+# `vsce --target` down to the one matching the package's target platform.
 #
-#   prebuilds/  every platform's prebuilt binary, resolved at require time
-#   lib/        the JS wrapper that does the resolving
-#   package.json  the package's own `main`/`exports` entry points
-#   LICENSE       the MIT text, which must travel with the binary
-#
-# Everything else in the package — `deps/` (vendored SQLite C sources), `src/`
-# (the addon's C++ sources), `binding.gyp`, `README.md` — exists only so `npm
-# install` can compile from scratch, which every supported platform avoids by
-# shipping a prebuild.
-!node_modules/better-sqlite3/prebuilds/**
-!node_modules/better-sqlite3/lib/**
-!node_modules/better-sqlite3/package.json
-!node_modules/better-sqlite3/LICENSE
+#   libsql/           index.js (loader), auth.js, sqlite-error.js, promise.js,
+#                     types/, package.json, LICENSE — no build sources exist
+#   @libsql/<target>/ index.node + package.json (os/cpu used for pruning)
+#   @neon-rs/load/    dist/index.js — resolves the binary path at require time
+#   detect-libc/      lib/ — musl vs glibc detection for the Linux remap
+!node_modules/libsql/**
+!node_modules/@libsql/**
+!node_modules/@neon-rs/load/**
+!node_modules/detect-libc/**
 .git/**
 .git/**/*
 src/**

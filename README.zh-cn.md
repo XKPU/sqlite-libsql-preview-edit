@@ -30,7 +30,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## 驱动
 
-扩展运行于内置的 **原生 SQLite 驱动**（`better-sqlite3@13`，即 stock SQLite 的原生绑定）。
+扩展运行于内置的 **原生 libSQL 驱动**（`libsql`，即 SQLite 的 libSQL C 分支，以 npm 模块形式打包）。
 它直接打开本地文件，并读写通用的 `SQLite format 3` 容器格式，因此同一个编辑器即可处理 **SQLite、LibSQL 与 Turso Database** 三种文件。
 
 这是唯一的驱动，所有文件都由它处理。驱动与该标签的区别见[驱动与方言](#驱动与方言)。
@@ -49,8 +49,9 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 ## 功能
 
 - `.db` / `.sqlite` / `.sqlite3` / `.libsql` / `.turso` 文件（见[支持的数据库](#支持的数据库)）
-- 基于**标准 SQLite 3 本体**，因此可执行的特性集就是标准的那一套：`STRICT` 表、`ALTER TABLE … RENAME COLUMN` / `DROP COLUMN`、`RETURNING`、UPSERT，以及带非常量默认值的 `ADD COLUMN`
-- 原先只有 Turso Database 才提供的特性**不再可用**：`CREATE SEQUENCE` / `nextval()`、`ALTER TABLE … ALTER COLUMN`，以及 `vector_*` 系列函数 —— 标准 SQLite 会直接拒绝（例如 `near "SEQUENCE": syntax error`）
+- 基于 libSQL 引擎（SQLite 的 C 分支），因此标准特性集均可用：`STRICT` 表、`ALTER TABLE … RENAME COLUMN` / `DROP COLUMN`、`RETURNING`、UPSERT，以及带非常量默认值的 `ADD COLUMN`
+- LibSQL/Turso 文件可以使用 `vector_*` 系列函数 —— 它们由 libSQL 引擎本身实现
+- 原先只有 Turso Database 才提供的特性**不再可用**：`CREATE SEQUENCE` / `nextval()` 与 `ALTER TABLE … ALTER COLUMN`（例如 `near "SEQUENCE": syntax error`）
 - 使用这些特性的文件仍可正常打开与浏览；只有执行这类语句会失败
 - 自动方言检测（SQLite、LibSQL 或 Turso Database）
 - UI 跟随 VS Code 主题颜色
@@ -76,7 +77,7 @@ Intel macOS、Alpine/musl 以及 Windows `arm64` **不受支持**。
 
 信息面板显示两个彼此独立的字段。
 
-**驱动（Driver）** —— 实际执行查询的实现，取值始终为 `sqlite`：内置的 `better-sqlite3` 引擎是唯一驱动，不存在回退。
+**驱动（Driver）** —— 实际执行查询的实现，取值始终为 `libsql`：内置的 libSQL 引擎是唯一驱动，不存在回退。
 
 **方言（Dialect）** —— 文件所用的 SQL 方言，由文件自身推断得出，取值为 `SQLite`、`LibSQL` 或 `Turso Database`。
 
@@ -134,6 +135,20 @@ Turso 版本字符串**先于** LibSQL 检测，因为 LibSQL 的匹配模式也
 所有 AI 生成或建议的内容均经人工审核、验证并按需调整。
 
 AI 的使用不改变本项目的开源许可证及第三方条款。
+
+以下为中奖名单（以使用量排名）：
+- DeepSeek v4.1 Flash
+- GLM 5.3 Flash
+- GLM 5.3
+- DeepSeek v4 Pro
+- MiMo V2.6 Flash
+- GPT 6.1 Sol
+- Kimi K3
+- Hy4 preview
+- GPT 6 Astra
+- GLM 5.2
+- Hy3
+- Claude Opus 5.5
 
 ## 支持
 

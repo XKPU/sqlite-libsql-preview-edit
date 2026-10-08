@@ -100,7 +100,7 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
   }
 
   /**
-   * Create the database adapter — the native SQLite engine (`better-sqlite3`).
+   * Create the database adapter — the native libSQL engine (`libsql` npm driver).
    *
    * There is exactly one engine: a local-file binding to stock SQLite, which
    * reads and writes the shared `SQLite format 3` container. Because all three

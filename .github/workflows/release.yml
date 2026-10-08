@@ -7,40 +7,31 @@
 #
 # WHY PER-PLATFORM AT ALL
 # ----------------------
-# The extension's database engine is the NATIVE `better-sqlite3` (stock SQLite),
-# which compiles or loads a platform-specific binary.
+# The extension's database engine is the NATIVE `libsql` npm package (the libSQL
+# C fork), which loads a platform-specific binary shipped as ONE optional
+# dependency package per platform: `@libsql/<target>/index.node` (targets:
+# darwin-arm64, darwin-x64, win32-x64-msvc, linux-{x64,arm64}-gnu,
+# linux-{x64,arm64}-musl, linux-arm-{gnueabihf,musleabihf}).
 #
-# UNLIKE the engine this replaced, `better-sqlite3` ships EVERY platform's
-# prebuilt binary inside the ONE package, under `prebuilds/<platform>-<arch>.node`
-# (win32-x64, win32-arm64, darwin-x64, darwin-arm64, linux-x64, linux-arm64,
-# linuxmusl-x64, linuxmusl-arm64). There are no per-platform optional
-# dependencies such as `@tursodatabase/database-<platform>`, and no npm
-# cross-install variables are involved: `lib/binding.js` resolves the right
-# binary from `process.platform` / `process.arch` at require time, with musl
-# detected separately on Linux. So the installed node_modules is identical on
-# every platform and a SINGLE untargeted VSIX would run anywhere.
+# npm installs only the binary matching the HOST platform (optionalDependencies
+# honor os/cpu), so each runner gets its own target's binary automatically. One
+# VSIX is built per runner and ships exactly that binary — `scripts/
+# package-target.js` / `scripts/verify-vsix.js` enforce the one-binary layout.
+# (`vsce --target` alone does NOT prune the sibling `@libsql/*` packages —
+# measured on vsce 4.x — but on CI each runner only ever has its own binary
+# installed, so nothing else can leak into the archive. The local script prunes
+# explicitly because a dev machine may have installed several.)
 #
-# The per-target split is therefore no longer a packaging necessity — it is kept
-# so each published artifact advertises its platform and users get the right one
-# without the Marketplace guessing. VS Code stores one VSIX per target under the
-# same version, and each user's VS Code downloads the one matching their OS/arch.
-# `npm run package` also produces a single untargeted VSIX that works everywhere.
-#
-# (A WASM client would avoid all of this, but the previously evaluated
-# `@libsql/client-wasm` cannot open a database file — an absolute path fails
-# with SQLITE_CANTOPEN and a relative one silently becomes an in-memory DB — so
-# it is not an option.)
-#
-# The target list is the extension's own advertised platform set. `better-sqlite3`
-# ships binaries for two of the excluded platforms as well (darwin-x64 and the
-# musl builds), so their exclusion is a product decision — the extension has
-# never advertised them and they are untested — NOT a missing binary.
+# On Linux the loader remaps musl→gnu (`node_modules/libsql/index.js`), so the
+# gnu binaries also serve Alpine/musl users.
 #
 # DELIBERATELY UNSUPPORTED — do not add these to the matrix:
-#   - darwin-x64    (macOS on Intel)
-#   - musl/Alpine   (`linuxmusl-x64`, `linuxmusl-arm64`)
-#   - win32-arm64   (Windows on ARM)
-# If the extension ever starts advertising one of them, add it here too.
+#   - darwin-x64    (macOS on Intel): libsql DOES ship `@libsql/darwin-x64`, but
+#     the extension does not advertise or test it. Intel-Mac users can package
+#     the VSIX themselves — see SUPPORT.md for the step-by-step tutorial.
+#   - win32-arm64   (Windows on ARM): no libsql binary exists for this target.
+#   - linux musl-specific binaries: served by the gnu builds via the loader's
+#     remap, so a separate matrix entry would change nothing.
 name: Build platform VSIXs
 
 # MANUAL ONLY. There is deliberately no `push` or `pull_request` trigger: this
@@ -69,19 +60,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           # Node 24, deliberately above the minimum the build toolchain allows.
-          # `@vscode/vsce` 4 only declares `engines: { node: ">= 22" }`, but the
-          # npm bundled with Node 22 (npm 10) ships node-gyp 11, which cannot
-          # detect the Visual Studio 2026 (18.x) installation on the current
-          # `windows-latest` image (`windows-2025-vs2026`, VS Enterprise 18.x).
-          # npm runs an IMPLICIT `node-gyp rebuild` for `better-sqlite3` because
-          # the package ships a `binding.gyp`, and the configure step dies before
-          # `binding.gyp` can no-op itself. Reproduced locally against VS 2026:
-          #   gyp ERR! find VS unknown version "undefined" found at
-          #   "C:\Program Files\Microsoft Visual Studio\18\Professional"
-          #   gyp ERR! find VS could not find a version of Visual Studio 2017 ...
-          # npm 11 (Node 24) ships node-gyp >= 12.1, which added VS 18 support.
-          # The VS Code extension host itself is unaffected — none of these
-          # packaging-time-only dependencies are ever loaded by the extension.
+          # The extension itself has no node-gyp step anymore (libsql ships
+          # prebuilt binaries), but `@vscode/vsce` 4 declares
+          # `engines: { node: ">= 22" }` and the tooling is exercised on the
+          # same Node everywhere, so one modern version is pinned here.
           node-version: '24'
           cache: npm
 
@@ -118,12 +100,11 @@ jobs:
           - os: windows-latest
             target: win32-x64
             vsce_target: win32-x64
-          # win32-arm64 is NOT built: `better-sqlite3` DOES ship a
-          # `prebuilds/win32-arm64` binary, but the extension has never
-          # advertised Windows on ARM and does not test it.
-          # --- macOS: runner arch decides the binary -------------------------
-          # Only the Apple-silicon build is advertised. `prebuilds/darwin-x64`
-          # DOES exist, but macOS Intel has never been advertised or tested.
+          # win32-arm64 is NOT built: libsql publishes no binary for it.
+          # --- macOS: Apple Silicon ------------------------------------------
+          # Only the Apple-silicon build is advertised. `@libsql/darwin-x64`
+          # DOES exist upstream, but macOS Intel has never been advertised or
+          # tested; see SUPPORT.md for the self-packaging tutorial instead.
           - os: macos-latest
             target: darwin-arm64
             vsce_target: darwin-arm64
@@ -131,24 +112,19 @@ jobs:
           - os: ubuntu-latest
             target: linux-x64
             vsce_target: linux-x64
-          # A NATIVE arm64 runner, so node-gyp never has to cross-compile:
-          # `npm ci` on this runner resolves its own prebuild from the host.
+          # A NATIVE arm64 runner, so nothing has to cross-compile: `npm ci` on
+          # this runner resolves its own `@libsql/linux-arm64-gnu` binary from
+          # the host.
           - os: ubuntu-24.04-arm
             target: linux-arm64
             vsce_target: linux-arm64
-          # Alpine (musl) is NOT built: `prebuilds/linuxmusl-*` DOES exist, but
-          # the extension has never advertised musl and does not test it.
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          # Must match the `verify` job. Node 24 rather than 22 because the npm
-          # bundled with Node 22 (npm 10) ships node-gyp 11, which cannot detect
-          # Visual Studio 2026 on the current `windows-latest` image and fails
-          # the implicit `node-gyp rebuild` for `better-sqlite3`; npm 11 bundles
-          # node-gyp >= 12.1, which can. See the `verify` job for the full log.
+          # Must match the `verify` job.
           node-version: '24'
           # Caches only the npm DOWNLOAD cache (~/.npm), which is platform
           # independent. The installed node_modules is NOT cached, so each matrix
@@ -157,15 +133,13 @@ jobs:
 
       # Install the dependency tree.
       #
-      # `better-sqlite3` carries every platform's prebuilt binary in the one
-      # package, so nothing target-specific is installed here: each runner
-      # installs the same tree, and the binary that is actually loaded is picked
-      # from `prebuilds/` at require time. There are no per-platform optional
-      # dependencies to fetch and no cross-install variables to set.
+      # libsql ships one binary package per platform as optionalDependencies, so
+      # npm installs ONLY the binary matching this runner — which is exactly the
+      # one this job's VSIX must carry. No cross-install variables are involved.
       #
-      # These variables are deliberately NOT set. They used to be wired to
-      # `${{ matrix.npm_config_arch }}` and friends, but those matrix fields do
-      # not exist, so Actions rendered them as EMPTY STRINGS. An empty
+      # These npm_config_* variables are deliberately NOT set. They used to be
+      # wired to `${{ matrix.npm_config_arch }}` and friends, but those matrix
+      # fields do not exist, so Actions rendered them as EMPTY STRINGS. An empty
       # `npm_config_arch` is worse than an unset one: `@vscode/vsce-sign`'s
       # postinstall resolves its native binary with
       # `process.env['npm_config_arch'] ?? process.arch`, and `??` does not fall
@@ -188,6 +162,24 @@ jobs:
           node -e "console.log('installing for', process.platform, process.arch)"
           npm ci
 
+      # Fail BEFORE packaging if this runner did not get its engine binary:
+      # that would mean the lockfile or npm lost the optional dependency, and
+      # the VSIX would ship an engine that cannot load.
+      - name: Check the engine binary is installed
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const { currentTarget } = require('@neon-rs/load');
+            const t = currentTarget();
+            const p = 'node_modules/@libsql/' + t + '/index.node';
+            if (!fs.existsSync(p)) {
+              console.error('engine binary missing for target ' + t + ' (expected ' + p + ')');
+              process.exit(1);
+            }
+            console.log('engine binary present: ' + p);
+          "
+
       # The smoke test loads the COMPILED adapter (it exercises the real code path
       # rather than the TypeScript source), so the extension must be built first.
       # `npm ci` only installs dependencies and produces no `out/`, which is why
@@ -209,19 +201,21 @@ jobs:
       - name: Smoke-test the native engine
         run: node scripts/smoke-native.js
 
+      # The local script also prunes sibling @libsql binaries; on CI each runner
+      # has only its own binary installed, so a plain vsce package is equivalent.
+      # Same output layout as `npm run package:target`: VSIX/<version>/.
       - name: Package targeted VSIX (${{ matrix.vsce_target }})
         shell: bash
         run: |
           npm run compile
-          # Same output layout as `npm run package:target`: VSIX/<version>/.
           # Read the version from package.json so this can never drift from the
           # manifest that vsce actually packaged.
           VERSION=$(node -p "require('./package.json').version")
           mkdir -p "VSIX/$VERSION"
           # NOTE: do NOT pass --no-dependencies. That flag stops vsce from
-          # walking the dependency tree, so `node_modules/better-sqlite3/**`
-          # never reaches the archive and the installed extension cannot load
-          # its engine at all. `.vscodeignore` is what controls the contents.
+          # walking the dependency tree, so `node_modules/libsql/**` never
+          # reaches the archive and the installed extension cannot load its
+          # engine at all. `.vscodeignore` is what controls the contents.
           node node_modules/@vscode/vsce/vsce package \
             --target "${{ matrix.vsce_target }}" \
             -o "VSIX/$VERSION/sqlite-libsql-preview-edit-${{ matrix.vsce_target }}.vsix"
