@@ -743,6 +743,14 @@ export class DatabaseEditorProvider implements vscode.CustomReadonlyEditorProvid
     this.logger.info(
       `opened: driver=${r.driver} engine=${r.engine} version=${r.version} size=${r.sizeBytes} writable=${r.writable}`
     );
+    if (r.readOnly && r.readOnlyReason === 'locked') {
+      // The adapter detected a peer's exclusive lock and degraded to enforced
+      // read-only. The info panel shows the same verdict, but only a VS Code
+      // notification is visible WITHOUT the user reading the tree — say it
+      // here, where "why can't I edit?" gets answered immediately.
+      this.logger.warn('database is locked by a peer; opened read-only');
+      void vscode.window.showWarningMessage(this.state.i18n.t('cmd.openedLocked'));
+    }
     this.logger.info(
       `LibSQL detection: libSql=${r.detection.libSql} decidedBy=${r.detection.decidedBy} fallback=${r.detection.fallback} evidence=${r.detection.evidence.map((e) => `${e.kind}:${e.weight}`).join(',') || '(none)'}`
     );

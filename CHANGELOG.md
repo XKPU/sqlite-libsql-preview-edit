@@ -1,5 +1,17 @@
 # SQLite/LibSQL/Turso Preview&Edit
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed lock conflicts being detected only on write — the database is now checked for exclusive locks held by another process at open time, so conflicts surface immediately instead of when the first write is attempted\
+  修复锁冲突仅在写入时才被检测 — 现在预览库打开时即检查是否被另一进程独占锁定，冲突在打开时立即暴露而非等到首次写入尝试
+
+- Restored the display logic for the auto-increment sequence bookkeeping table (`sqlite_sequence`) in the sidebar\
+  恢复侧边栏中自增计数簿记表（`sqlite_sequence`）的显示逻辑
+
+---
+
 ## [v0.0.6]
 
 ### Added

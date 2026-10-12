@@ -379,44 +379,26 @@ interface NewTableForm {
   tableName: string;
   idColumn: string;
   autoIncrement: boolean;
-  sequenceName: string;
-  startValue: string;
-  incrementBy: string;
-  minValue: string;
-  maxValue: string;
 }
 
 const EMPTY_FORM: NewTableForm = {
   tableName: '',
   idColumn: 'id',
-  autoIncrement: true,
-  sequenceName: '',
-  startValue: '',
-  incrementBy: '',
-  minValue: '',
-  maxValue: ''
+  autoIncrement: true
 };
-
-/** Parse an optional numeric field; '' means "unset", junk becomes NaN. */
-function optionalNumber(text: string): number | undefined {
-  const trimmed = text.trim();
-  if (trimmed === '') return undefined;
-  return Number(trimmed);
-}
 
 /**
  * Create a new table.
  *
- * The SQL is not assembled here: `buildNewTablePlan` owns validation, capability
- * gating and generation, and this dialog REUSES that decision rather than
- * duplicating it — the confirm button is enabled only when the same function the
- * hook will call reports `ok`. That keeps the preview honest: what the user
- * reads in the preview is exactly what gets executed.
+ * The SQL is not assembled here: `buildNewTablePlan` owns validation and
+ * generation, and this dialog REUSES that decision rather than duplicating it —
+ * the confirm button is enabled only when the same function the hook will call
+ * reports `ok`. That keeps the preview honest: what the user reads in the
+ * preview is exactly what gets executed.
  *
- * Sequences are disabled rather than hidden. `CREATE SEQUENCE` is a Turso
- * Database extension, so no engine this extension currently drives can execute
- * it; the fields stay visible but inert so the capability is discoverable and
- * the UI needs no restructuring when such an engine is added.
+ * AUTOINCREMENT uses the SQLite baseline (`INTEGER PRIMARY KEY AUTOINCREMENT`).
+ * A custom named sequence would need the `CREATE SEQUENCE` extension, which no
+ * engine this extension drives implements, so no sequence fields are offered.
  */
 export const NewTableDialog: React.FC<NewTableDialogProps> = ({ state, open, onClose }) => {
   const { t } = useI18n();
@@ -439,26 +421,12 @@ export const NewTableDialog: React.FC<NewTableDialogProps> = ({ state, open, onC
   const options: NewTableOptions = {
     tableName: form.tableName,
     idColumn: form.idColumn,
-    autoIncrement: form.autoIncrement,
-    // A sequence is only ever sent when the user actually named one; the pure
-    // layer treats "autoIncrement && sequenceName defined" as the request.
-    sequenceName: form.autoIncrement && form.sequenceName.trim() !== '' ? form.sequenceName : undefined,
-    startValue: optionalNumber(form.startValue),
-    incrementBy: optionalNumber(form.incrementBy),
-    minValue: optionalNumber(form.minValue),
-    maxValue: optionalNumber(form.maxValue)
+    autoIncrement: form.autoIncrement
   };
-
-  const capabilities = state.dbInfo?.capabilities ?? SQLITE_CAPABILITIES;
-  // Sequences are a Turso Database extension. The flag comes from the reported
-  // capabilities rather than the engine name, because libSQL and stock SQLite
-  // are "SQLite family" too but cannot parse `CREATE SEQUENCE`.
-  const sequencesSupported = capabilities.sequences === true;
 
   const plan = buildNewTablePlan(options, {
     engine: state.dbInfo?.engine ?? 'sqlite',
-    capabilities,
-    sequencesSupported,
+    capabilities: state.dbInfo?.capabilities ?? SQLITE_CAPABILITIES,
     existingNames: state.objects.map((o) => o.name)
   });
 
@@ -475,10 +443,9 @@ export const NewTableDialog: React.FC<NewTableDialogProps> = ({ state, open, onC
   const fieldError = (field: NewTableField) =>
     errorField === field && errorKey ? <span className="field-help error-text">{t(errorKey)}</span> : null;
 
-  // Errors that belong to no rendered input still have to be visible.
-  const inlineField = errorField !== null && (errorField === 'tableName' || errorField === 'idColumn'
-    || errorField === 'startValue' || errorField === 'incrementBy'
-    || errorField === 'minValue' || errorField === 'maxValue');
+  // Errors that belong to no rendered input still have to be visible. Only the
+  // two rendered inputs exist; any other field would be a stale plan.
+  const inlineField = errorField === 'tableName' || errorField === 'idColumn';
   const generalError = errorKey && !inlineField ? t(errorKey) : null;
 
   const submit = async () => {
@@ -538,59 +505,6 @@ export const NewTableDialog: React.FC<NewTableDialogProps> = ({ state, open, onC
         onChange={(v) => patch({ autoIncrement: v })}
         label={t('newTable.autoIncrement')}
       />
-
-      {form.autoIncrement && (
-        <div className="field-spaced">
-          <Field label={t('newTable.sequence')} help={t('newTable.sequenceUnavailable')}>
-            <Input
-              value={form.sequenceName}
-              disabled={!sequencesSupported}
-              onChange={(e) => patch({ sequenceName: e.target.value })}
-              placeholder={t('newTable.sequencePlaceholder')}
-            />
-          </Field>
-          <div className="field-row">
-            <Field label={t('newTable.startValue')}>
-              <Input
-                value={form.startValue}
-                disabled={!sequencesSupported}
-                onChange={(e) => patch({ startValue: e.target.value })}
-                placeholder={t('newTable.defaultHint')}
-              />
-              {fieldError('startValue')}
-            </Field>
-            <Field label={t('newTable.incrementBy')}>
-              <Input
-                value={form.incrementBy}
-                disabled={!sequencesSupported}
-                onChange={(e) => patch({ incrementBy: e.target.value })}
-                placeholder={t('newTable.defaultHint')}
-              />
-              {fieldError('incrementBy')}
-            </Field>
-          </div>
-          <div className="field-row">
-            <Field label={t('newTable.minValue')}>
-              <Input
-                value={form.minValue}
-                disabled={!sequencesSupported}
-                onChange={(e) => patch({ minValue: e.target.value })}
-                placeholder={t('newTable.defaultHint')}
-              />
-              {fieldError('minValue')}
-            </Field>
-            <Field label={t('newTable.maxValue')}>
-              <Input
-                value={form.maxValue}
-                disabled={!sequencesSupported}
-                onChange={(e) => patch({ maxValue: e.target.value })}
-                placeholder={t('newTable.defaultHint')}
-              />
-              {fieldError('maxValue')}
-            </Field>
-          </div>
-        </div>
-      )}
 
       {generalError && <div className="error-text field-spaced">{generalError}</div>}
 

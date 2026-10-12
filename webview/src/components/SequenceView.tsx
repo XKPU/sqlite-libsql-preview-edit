@@ -22,12 +22,13 @@ export const SequenceView: React.FC<SequenceViewProps> = ({ state }) => {
   // `key` is typed as `MessageKey` so the literal is preserved: `t()` only
   // accepts catalogued keys, so an untranslated row label becomes a build error
   // instead of leaking a raw key into the UI.
+  //
+  // Only name and value are shown: this object is a row of `sqlite_sequence`
+  // (the AUTOINCREMENT bookkeeping table), so the engine exposes nothing beyond
+  // the current counter — there is no min/max/increment to display.
   const rows: Array<{ key: MessageKey; value: string | number | null }> = [
     { key: 'seq.name', value: name },
-    { key: 'seq.value', value: value ?? null },
-    { key: 'seq.min', value: null },
-    { key: 'seq.max', value: null },
-    { key: 'seq.increment', value: null }
+    { key: 'seq.value', value: value ?? null }
   ];
 
   return (

@@ -109,7 +109,7 @@ export const SqlResult: React.FC<SqlResultProps> = ({ state }) => {
 
   return (
     <div className="sql-result">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+      <div className="sql-result-summary">
         <span className="muted">
           {t('sql.result')}: {results.rows.length} rows, {results.columns.length} columns
         </span>
@@ -121,6 +121,7 @@ export const SqlResult: React.FC<SqlResultProps> = ({ state }) => {
         <table className="data-table">
           <thead>
             <tr>
+              <th className="cell-index">#</th>
               {results.columns.map((c) => (
                 <th key={c.name}>
                   <span>{c.name}</span>
@@ -132,6 +133,7 @@ export const SqlResult: React.FC<SqlResultProps> = ({ state }) => {
           <tbody>
             {results.rows.map((cells, ri) => (
               <tr key={ri}>
+                <td className="cell-index">{ri + 1}</td>
                 {cells.map((v, ci) => (
                   <td key={ci}>{renderValue(v, settings)}</td>
                 ))}
@@ -139,7 +141,7 @@ export const SqlResult: React.FC<SqlResultProps> = ({ state }) => {
             ))}
             {results.rows.length === 0 && (
               <tr>
-                <td colSpan={results.columns.length} style={{ padding: 16, textAlign: 'center', color: 'var(--vscode-descriptionForeground)' }}>
+                <td colSpan={results.columns.length + 1} style={{ padding: 16, textAlign: 'center', color: 'var(--vscode-descriptionForeground)' }}>
                   {t('empty')}
                 </td>
               </tr>

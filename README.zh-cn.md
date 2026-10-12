@@ -138,17 +138,12 @@ AI 的使用不改变本项目的开源许可证及第三方条款。
 
 以下为中奖名单（以使用量排名）：
 - GLM 5.3 Flash
-- DeepSeek v4.1 Flash
-- GPT 6.1 Sol
-- DeepSeek v4 Pro
-- GLM 5.3
-- GPT 6 Astra
-- MiMo V2.6 Flash
-- Kimi K3
 - Claude Opus 5.5
-- Hy4 preview
-- GLM 5.2
-- Hy3
+- GPT 6.1 Sol
+- DeepSeek v4.1 Flash
+- GPT 6 Astra
+- GLM 5.3
+- DeepSeek v4 Pro
 
 ## 支持
 

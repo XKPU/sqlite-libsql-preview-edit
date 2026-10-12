@@ -41,6 +41,7 @@ export const DataTable: React.FC<DataTableProps> = ({ state }) => {
   const { t } = useI18n();
   const [editingCell, setEditingCell] = useState<{ row: number; col: string } | null>(null);
   const [editingValue, setEditingValue] = useState('');
+  const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const editingInputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -104,6 +105,19 @@ export const DataTable: React.FC<DataTableProps> = ({ state }) => {
     },
     [readOnly, settings]
   );
+
+  const duplicateTarget = selectedRow ?? editingCell?.row ?? 0;
+
+  // Reset the selection whenever the grid changes shape underneath it: a new
+  // page, a different table, or a refetch can leave the index pointing at a
+  // row the user is no longer looking at.
+  React.useEffect(() => {
+    setSelectedRow(null);
+  }, [currentTable, page.page, queryResults]);
+
+  const handleRowClick = useCallback((rowIndex: number) => {
+    setSelectedRow(rowIndex);
+  }, []);
 
   const commitEdit = useCallback(() => {
     if (!editingCell) return;
@@ -252,9 +266,9 @@ export const DataTable: React.FC<DataTableProps> = ({ state }) => {
             onClick={() => {
               // Duplicate the currently selected row. The old hard-coded `0`
               // always copied the first visible row no matter which row the
-              // user was on; there is no row-selection model, so the closest
-              // signal is the cell being edited (falling back to the first).
-              void state.duplicateRow(editingCell?.row ?? 0);
+              // user was on; the click-selected row is the signal now, falling
+              // back to the cell being edited, then the first row.
+              void state.duplicateRow(duplicateTarget);
             }}
             label={t('data.duplicateRow')}
           />
@@ -298,8 +312,16 @@ export const DataTable: React.FC<DataTableProps> = ({ state }) => {
           <tbody>
             {results.rows.map((cells, ri) => {
               const edit = findEdit(ri);
+              const rowCls = ['data-row'];
+              if (selectedRow === ri) rowCls.push('data-row-selected');
               return (
-                <tr key={ri} style={{ position: 'relative' }}>
+                <tr
+                  key={ri}
+                  className={rowCls.join(' ')}
+                  // DBeaver selects the row you click before you edit a cell in
+                  // it; double-click still enters the cell editor untouched.
+                  onClick={() => handleRowClick(ri)}
+                >
                   <td className="cell-index">{ri + 1}</td>
                   {visibleColumns.map((col, ci) => {
                     const cellEdit = getCellEdit(ri, col.name);

@@ -889,26 +889,19 @@ export function useDatabaseState(): DatabaseState {
   /**
    * Create a table from the new-table dialog.
    *
-   * The SQL is assembled by `buildNewTablePlan` in `src/shared/ddl.ts`, which is
-   * also what decides whether a sequence is legal for the current engine. The
+   * The SQL is assembled by `buildNewTablePlan` in `src/shared/ddl.ts`. The
    * dialog is authoritative for input, but this layer re-runs the plan so a
-   * caller cannot post LibreSQL-only DDL to a plain SQLite file by accident.
+   * stale webview cannot post DDL the engine would reject.
    *
-   * Returns the created table name so the caller can select it; throws with a
-   * readable message when the plan refuses the input, which the dialog renders
-   * inline rather than as a toast (the user is still editing the form).
+   * Throws with a readable message when the plan refuses the input, which the
+   * dialog renders inline rather than as a toast (the user is still editing the
+   * form).
    */
   const createTable = useCallback(
     async (options: NewTableOptions) => {
-      const engine = dbInfo?.engine ?? 'sqlite';
-      const capabilities = dbInfo?.capabilities ?? SQLITE_CAPABILITIES;
       const plan = buildNewTablePlan(options, {
-        engine,
-        capabilities,
-        // Sequences are a Turso Database extension; the capability flag is the
-        // source of truth, so a plain SQLite or libSQL file cannot emit DDL its
-        // engine would reject.
-        sequencesSupported: capabilities.sequences === true,
+        engine: dbInfo?.engine ?? 'sqlite',
+        capabilities: dbInfo?.capabilities ?? SQLITE_CAPABILITIES,
         existingNames: objects.map((o) => o.name)
       });
       if (!plan.ok) {
@@ -919,7 +912,6 @@ export function useDatabaseState(): DatabaseState {
         addToast('error', describeError(res.error));
         return;
       }
-      for (const key of plan.warningKeys) addToast('warning', t(key));
       addToast('success', t('newTable.created'));
       setShowNewTableDialog(false);
       await Promise.all([refreshInfo(), refreshMetadata()]);

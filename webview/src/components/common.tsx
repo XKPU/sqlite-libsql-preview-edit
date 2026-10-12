@@ -345,6 +345,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const cls = [
     'btn',
     variant === 'primary' ? 'btn-primary' : '',
+    variant === 'secondary' ? 'btn-secondary' : '',
     variant === 'danger' ? 'btn-danger' : '',
     iconOnly || (icon && !children) ? 'btn-icon' : '',
     size === 'sm' ? 'btn-sm' : '',

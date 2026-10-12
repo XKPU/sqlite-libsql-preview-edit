@@ -20,6 +20,7 @@ export const zhCn = {
   'cmd.clearCache': '清除缓存',
   'cmd.clearCacheEmpty': '当前没有配置受保护表（libSqlPreviewEdit.readOnlyTables）。',
   'cmd.clearCacheDone': '已从 libSqlPreviewEdit.readOnlyTables 中移除 {count} 个受保护表。',
+  'cmd.openedLocked': '该数据库已被其他进程锁定，已自动以只读方式打开。待其他程序释放锁后重新打开即可恢复编辑。',
 
   /* webview messages */
   'msg.loading': '正在加载数据库…',
@@ -176,9 +177,6 @@ export const zhCn = {
   'seq.note': 'SQLite 只保存 AUTOINCREMENT 序列的当前计数器值。',
   'seq.name': '名称',
   'seq.value': '数值',
-  'seq.min': '最小值',
-  'seq.max': '最大值',
-  'seq.increment': '增量',
 
   /* data-type reference view */
   'dt.title': '数据类型',
@@ -262,16 +260,7 @@ export const zhCn = {
   'newTable.idColumn': '主键列',
   'newTable.idColumnPlaceholder': '例如 id',
   'newTable.autoIncrement': '主键自增',
-  'newTable.sequence': '序列',
-  'newTable.sequencePlaceholder': '例如 users_id_seq',
-  'newTable.startValue': '起始值',
-  'newTable.incrementBy': '步长',
-  'newTable.minValue': '最小值',
-  'newTable.maxValue': '最大值',
-  'newTable.defaultHint': '默认',
   'newTable.preview': 'SQL 预览',
-  'newTable.sequenceUnavailable':
-    '使用序列生成主键需要 Turso Database 的 CREATE SEQUENCE 扩展，SQLite 与 libSQL 均未实现该扩展，因此当前数据库无法使用此选项。',
   'newTable.created': '表已创建',
 
   'err.newTable.nameRequired': '请输入表名。',
@@ -279,20 +268,6 @@ export const zhCn = {
   'err.newTable.nameExists': '已存在同名的表或视图。',
   'err.newTable.idRequired': '请输入主键列名。',
   'err.newTable.idInvalid': '列名中包含无法使用的字符。',
-  'err.newTable.seqNameRequired': '请输入序列名。',
-  'err.newTable.seqNameInvalid': '序列名中包含无法使用的字符。',
-  'err.newTable.seqNameIsTable': '序列名不能与表名相同。',
-  'err.newTable.seqNameIsColumn': '序列名不能与主键列名相同。',
-  'err.newTable.startInvalid': '起始值必须是整数。',
-  'err.newTable.incrementInvalid': '步长必须是整数。',
-  'err.newTable.minInvalid': '最小值必须是整数。',
-  'err.newTable.maxInvalid': '最大值必须是整数。',
-  'err.newTable.incrementZero': '步长不能为 0。',
-  'err.newTable.minNotBelowMax': '最小值必须小于最大值。',
-  'err.newTable.startBelowMin': '递增序列的起始值不能小于最小值。',
-  'err.newTable.startAboveMax': '递减序列的起始值不能大于最大值。',
-  'err.newTable.seqUnsupported': '当前数据库不支持序列，无法由序列生成主键值。',
-  'warn.newTable.seqNameSameAsId': '序列名与主键列名相同。',
 
   /* language */
   'language': '语言',

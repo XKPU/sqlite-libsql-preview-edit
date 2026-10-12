@@ -547,6 +547,15 @@ export class SqliteAdapter implements DatabaseAdapter {
       this.db = db;
       this.version = String(this.scalar('SELECT sqlite_version();') ?? 'unknown');
       this.detection = this.detectLibSql();
+      // A read-write open succeeding does NOT prove the file is writable: SQLite
+      // takes its write lock lazily, so a peer that already holds it (BEGIN
+      // EXCLUSIVE, a long write transaction, or an OS-level exclusive handle)
+      // still lets this open succeed and only the first write would fail —
+      // minutes later, with unsaved edits in the balance. Probe the lock now,
+      // while opening, and degrade to enforced read-only instead.
+      if (!userReadOnly && !this.readOnlyFallback) {
+        this.probeExclusiveLock();
+      }
       return this.info();
     } catch (e) {
       // Remember the failure so `getInfo()` can keep reporting it: the UI asks
@@ -560,6 +569,65 @@ export class SqliteAdapter implements DatabaseAdapter {
 
   isOpen(): boolean {
     return this.db !== null && this.db.open;
+  }
+
+  /**
+   * Detect a peer's exclusive/global lock and degrade to enforced read-only.
+   *
+   * WHY A PROBE AT ALL: SQLite acquires its write lock lazily — the first write,
+   * not the open, is where a lock conflict surfaces. Opening read-write on a
+   * file another process has locked EXCLUSIVE (or is mid-write-transaction on)
+   * therefore succeeds, and the conflict would only erupt at the first save,
+   * after the user has typed edits that then cannot be committed. Detecting the
+   * situation at open time turns that late surprise into an upfront verdict.
+   *
+   * HOW: `BEGIN IMMEDIATE` is the cheapest statement that asks the engine to
+   * take the write lock NOW. It succeeds against mere readers (in both journal
+   * modes), so ordinary concurrent access never trips it; it fails — after the
+   * engine's own busy handler has waited `LOCK_TIMEOUT_MS` — only when a peer
+   * holds the write path. On failure this connection is put under
+   * `query_only = ON`, which the engine enforces (see the constructor caveat:
+   * the driver's own `readonly` flag is not), and `readOnlyFallback` records
+   * `readOnlyReason: 'locked'` for the UI.
+   *
+   * A false "locked" is possible only if a peer's write transaction ends within
+   * the probe window (the busy timeout already makes that window tiny), and its
+   * cost is a read-only session for an actually-writable file — the user can
+   * re-open. A false "writable" costs the late write failure the probe exists
+   * to prevent, so the verdict errs toward detection.
+   *
+   * Callers run this right after a successful read-write open, before any other
+   * traffic on the connection; it must never throw (a probe failure is a
+   * verdict, not an open failure) and must never leave a transaction open.
+   */
+  private probeExclusiveLock(): void {
+    const db = this.db;
+    if (!db) return;
+    try {
+      db.exec('BEGIN IMMEDIATE;');
+      try {
+        db.exec('ROLLBACK;');
+      } catch {
+        // The COMMIT/ROLLBACK itself failing after a successful BEGIN would
+        // leave the connection in a transaction; force-close it. Nothing user
+        // visible depends on this — the probe is only a lock question.
+      }
+    } catch (e) {
+      if (!isLockError(e)) {
+        // A non-lock failure (disk I/O error, corrupt schema, …) says nothing
+        // about locking — leave the writability verdict to the writes.
+        return;
+      }
+      // A peer holds the lock: switch THIS connection to enforced read-only so
+      // the UI and every write path agree with what the engine will do.
+      this.readOnlyFallback = true;
+      try {
+        db.exec('PRAGMA query_only = ON;');
+      } catch {
+        // If even the pragma fails the connection is unusable anyway; the next
+        // statement reports the real error.
+      }
+    }
   }
 
   async getInfo(): Promise<DatabaseInfo | ErrorInfo> {
@@ -709,16 +777,33 @@ export class SqliteAdapter implements DatabaseAdapter {
           hidden: isInternalObject(String(r.name))
         }));
 
-      // NO synthesized "sequence" objects here, deliberately.
+      // Synthesize one pseudo "sequence" object per `sqlite_sequence` row.
       //
-      // The previous adapter turned every row of `sqlite_sequence` into a pseudo
-      // sequence. On stock SQLite `sqlite_sequence` is NOT a user sequence: it is
-      // the AUTOINCREMENT bookkeeping table, and it only exists while some table
-      // declares AUTOINCREMENT. Presenting it as a sequence would invent a
-      // database object that cannot be created, altered or dropped, and would
-      // tell the user their AUTOINCREMENT table has a "sequence" they never
-      // wrote. `CREATE SEQUENCE` does not exist in this engine, so
-      // `SQLITE_CAPABILITIES.sequences` is false and there is nothing to report.
+      // `sqlite_sequence` is the AUTOINCREMENT bookkeeping table — it exists
+      // only while some table declares AUTOINCREMENT, and its rows are counters
+      // the ENGINE owns, not objects the user created. They are presented as
+      // sequences so the AUTOINCREMENT counters get a visible, copyable home in
+      // the tree, with the caveats the UI states (`seq.note`): read-only
+      // values, no min/max/increment, and they can be neither created nor
+      // dropped from here. (`CREATE SEQUENCE` does not exist in this engine —
+      // see `SQLITE_CAPABILITIES.sequences`.)
+      try {
+        const seqRows = this.rows('SELECT name, seq FROM sqlite_sequence ORDER BY name;');
+        for (const r of seqRows) {
+          const name = String(r.name);
+          if (!includeHidden && isInternalObject(name)) continue;
+          out.push({
+            name,
+            type: 'sequence',
+            sql: `SELECT seq FROM sqlite_sequence WHERE name = ${quoteLiteral(name)};`,
+            hidden: isInternalObject(name),
+            seq: Number(r.seq)
+          });
+        }
+      } catch {
+        // sqlite_sequence is optional; its absence simply means no AUTOINCREMENT
+        // table exists, which is not an error.
+      }
       return out;
     } catch (e) {
       return toErrorInfo(e, 'Unknown error listing database objects.');
@@ -1062,6 +1147,9 @@ export class SqliteAdapter implements DatabaseAdapter {
     const typeName =
       type === 'table' ? 'TABLE' : type === 'view' ? 'VIEW' : type === 'index' ? 'INDEX' : type === 'trigger' ? 'TRIGGER' : null;
     if (typeName === null) {
+      // Includes 'sequence': a synthesized pseudo-sequence has no DDL behind it
+      // (it is a row of sqlite_sequence, engine-owned bookkeeping), so there is
+      // nothing a DROP statement could target.
       return { code: 'SQL_ERROR', message: `Cannot drop an object of type "${type}".` };
     }
     try {
